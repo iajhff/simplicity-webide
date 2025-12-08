@@ -21,15 +21,15 @@
     <link data-trunk rel="copy-dir" href="src/assets/animations" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
 
-    <!-- CodeMirror for syntax highlighting (optional enhancement) -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
-    <link data-trunk rel="css" href="src/assets/style/simplicity-theme.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/mode/simple.min.js"></script>
-    <link data-trunk rel="copy-file" href="src/assets/js/codemirror/simplicityhl.js" />
-    <link data-trunk rel="copy-file" href="src/assets/js/simplicity-editor.js" />
-    <script src="/simplicityhl.js"></script>
-    <script src="/simplicity-editor.js"></script>
+    <!-- Monaco Editor for syntax highlighting and IntelliSense -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/editor/editor.main.css">
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+    <link data-trunk rel="copy-file" href="src/assets/js/jets-data.js" />
+    <link data-trunk rel="copy-file" href="src/assets/js/monaco-simplicityhl.js" />
+    <link data-trunk rel="copy-file" href="src/assets/js/monaco-editor-init.js" />
+    <script src="/jets-data.js"></script>
+    <script src="/monaco-simplicityhl.js"></script>
+    <script src="/monaco-editor-init.js"></script>
 
     <noscript>This page requires JavaScript</noscript>
   </head>

@@ -26,22 +26,10 @@
     }
 }
 
-// CodeMirror styling (when enhanced with syntax highlighting)
-.CodeMirror {
-    height: auto;
-    min-height: 400px;
-    font-family: 'Roboto Mono', monospace;
-    font-size: 12px;
+// Monaco Editor styling
+#monaco-editor-container {
     border-radius: 7.5px;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    opacity: 0;
-    animation: fadeIn 0.2s ease-in forwards;
-}
-
-@keyframes fadeIn {
-    to {
-        opacity: 1;
-    }
+    overflow: hidden;
 }
 
 .copy-program {
