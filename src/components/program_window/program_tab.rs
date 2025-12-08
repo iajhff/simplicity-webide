@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use itertools::Itertools;
 use leptos::{
-    component, create_node_ref, create_rw_signal, ev, event_target_value, html, spawn_local,
+    component, create_effect, create_node_ref, create_rw_signal, ev, event_target_value, html, spawn_local,
     use_context, view, IntoView, RwSignal, Signal, SignalGetUntracked, SignalSet, SignalUpdate,
     SignalWith, SignalWithUntracked,
 };
@@ -10,6 +10,7 @@ use simplicityhl::parse::ParseFromStr;
 use simplicityhl::simplicity::jet::elements::ElementsEnv;
 use simplicityhl::{elements, simplicity};
 use simplicityhl::{CompiledProgram, SatisfiedProgram, WitnessValues};
+use wasm_bindgen::JsCast;
 
 use crate::components::copy_to_clipboard::CopyToClipboard;
 use crate::function::Runner;
@@ -175,6 +176,41 @@ pub fn ProgramTab() -> impl IntoView {
     let update_program_text = move |event: ev::Event| {
         program.text.set(event_target_value(&event));
     };
+    
+    // Initialize CodeMirror when textarea is mounted (optional enhancement)
+    create_effect(move |_| {
+        if let Some(textarea) = textarea_ref.get() {
+            // Only initialize once
+            spawn_local(async move {
+                // Small delay to ensure CodeMirror is loaded
+                gloo_timers::future::TimeoutFuture::new(50).await;
+                
+                if let Some(window) = web_sys::window() {
+                    // Check if CodeMirror and our init function exist
+                    let has_codemirror = js_sys::Reflect::has(&window, &"CodeMirror".into()).unwrap_or(false);
+                    let simplicity_editor = js_sys::Reflect::get(&window, &"SimplicityEditor".into()).ok();
+                    
+                    if has_codemirror {
+                        if let Some(editor_obj) = simplicity_editor {
+                            // Call SimplicityEditor.init() if it exists
+                            if let Ok(init_fn) = js_sys::Reflect::get(&editor_obj, &"init".into()) {
+                                if let Some(init_fn) = init_fn.dyn_ref::<js_sys::Function>() {
+                                    let textarea_id = "program-input";
+                                    let initial_value = textarea.value();
+                                    let _ = init_fn.call2(
+                                        &editor_obj,
+                                        &textarea_id.into(),
+                                        &initial_value.into()
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    
     let insert_4_spaces = move || {
         let element = textarea_ref.get().expect("<textarea> should be mounted");
         if let Ok(Some(start)) = element.selection_start() {
@@ -216,6 +252,7 @@ pub fn ProgramTab() -> impl IntoView {
                 </CopyToClipboard>
             </div>
             <textarea
+                id="program-input"
                 class="program-input-field"
                 placeholder="Enter your program here"
                 rows="25"
