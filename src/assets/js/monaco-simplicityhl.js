@@ -100,8 +100,15 @@ class MonacoSimplicityConfig {
                         folding: true,
                         renderWhitespace: 'selection',
                         suggestOnTriggerCharacters: true,
-                        quickSuggestions: true,
-                        wordBasedSuggestions: true
+                        quickSuggestions: {
+                            other: false,
+                            comments: false,
+                            strings: false
+                        },
+                        wordBasedSuggestions: false,
+                        acceptSuggestionOnCommitCharacter: false,
+                        acceptSuggestionOnEnter: 'on',
+                        snippetSuggestions: 'top'
                     }
                 );
 
@@ -258,72 +265,155 @@ class MonacoSimplicityConfig {
      */
     setupCompletionProvider() {
         monaco.languages.registerCompletionItemProvider('simplicityhl', {
+            triggerCharacters: [':'],
             provideCompletionItems: (model, position) => {
                 const suggestions = [];
                 
-                // Jet functions
-                this.jets.forEach(jet => {
-                    suggestions.push({
-                        label: `jet::${jet.name}`,
-                        kind: monaco.languages.CompletionItemKind.Function,
-                        insertText: `jet::${jet.name}`,
-                        detail: jet.type,
-                        documentation: jet.description
+                // Get the text before the cursor
+                const textUntilPosition = model.getValueInRange({
+                    startLineNumber: position.lineNumber,
+                    startColumn: 1,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                });
+                
+                // Get word at position
+                const word = model.getWordUntilPosition(position);
+                const range = {
+                    startLineNumber: position.lineNumber,
+                    endLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endColumn: word.endColumn
+                };
+                
+                // Check if we're after "jet::" - only show jets
+                if (textUntilPosition.endsWith('jet::')) {
+                    this.jets.forEach(jet => {
+                        suggestions.push({
+                            label: jet.name,
+                            kind: monaco.languages.CompletionItemKind.Function,
+                            insertText: jet.name,
+                            detail: jet.type,
+                            documentation: jet.description,
+                            range: range
+                        });
                     });
+                    return { suggestions };
+                }
+                
+                // Check if we're after "witness::" - don't suggest anything (user-defined)
+                if (textUntilPosition.endsWith('witness::')) {
+                    return { suggestions: [] };
+                }
+                
+                // Check if we're after "param::" - don't suggest anything (user-defined)
+                if (textUntilPosition.endsWith('param::')) {
+                    return { suggestions: [] };
+                }
+                
+                // Check if we're after "fn " - function name context, don't autocomplete
+                if (/fn\s+\w*$/.test(textUntilPosition)) {
+                    return { suggestions: [] };
+                }
+                
+                // Check if we're in a comment
+                if (/\/\/.*/.test(textUntilPosition)) {
+                    return { suggestions: [] };
+                }
+                
+                // Default context - show keywords, types, and jet:: prefix
+                
+                // Add jet:: trigger
+                suggestions.push({
+                    label: 'jet::',
+                    kind: monaco.languages.CompletionItemKind.Module,
+                    insertText: 'jet::',
+                    documentation: 'Access Simplicity jet functions',
+                    range: range
+                });
+                
+                // Add witness:: trigger
+                suggestions.push({
+                    label: 'witness::',
+                    kind: monaco.languages.CompletionItemKind.Module,
+                    insertText: 'witness::',
+                    documentation: 'Access witness values',
+                    range: range
+                });
+                
+                // Add param:: trigger
+                suggestions.push({
+                    label: 'param::',
+                    kind: monaco.languages.CompletionItemKind.Module,
+                    insertText: 'param::',
+                    documentation: 'Access parameter values',
+                    range: range
                 });
                 
                 // Keywords
                 const keywords = [
-                    'fn', 'let', 'match', 'assert', 'witness', 
-                    'if', 'else', 'Left', 'Right', 'true', 'false', 'return'
+                    'fn', 'let', 'match', 'assert', 
+                    'if', 'else', 'Left', 'Right', 'true', 'false', 'return', 'Some', 'None'
                 ];
                 keywords.forEach(kw => {
                     suggestions.push({
                         label: kw,
                         kind: monaco.languages.CompletionItemKind.Keyword,
-                        insertText: kw
+                        insertText: kw,
+                        range: range
                     });
                 });
                 
-                // Types
+                // Types (only in type position contexts)
                 const types = [
                     'u8', 'u16', 'u32', 'u64', 'u128', 'u256',
                     'Pubkey', 'Signature', 'Either', 'Option', 'bool',
                     'Word8', 'Word16', 'Word32', 'Word64', 'Word256',
                     'Ctx8', 'FE', 'GE', 'GEJ', 'Point', 'Scalar', 'Height', 'Time'
                 ];
-                types.forEach(type => {
-                    suggestions.push({
-                        label: type,
-                        kind: monaco.languages.CompletionItemKind.Class,
-                        insertText: type
+                
+                // Only suggest types if we're in a type context (after : or ->)
+                if (/:\s*\w*$/.test(textUntilPosition) || /->\s*\w*$/.test(textUntilPosition)) {
+                    types.forEach(type => {
+                        suggestions.push({
+                            label: type,
+                            kind: monaco.languages.CompletionItemKind.Class,
+                            insertText: type,
+                            range: range
+                        });
                     });
-                });
+                }
                 
-                // Snippets
-                suggestions.push({
-                    label: 'fn main',
-                    kind: monaco.languages.CompletionItemKind.Snippet,
-                    insertText: 'fn main() {\n\t${1}\n}',
-                    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                    documentation: 'Main function template'
-                });
-                
-                suggestions.push({
-                    label: 'assert',
-                    kind: monaco.languages.CompletionItemKind.Snippet,
-                    insertText: 'assert!(${1:condition})',
-                    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                    documentation: 'Assertion statement'
-                });
-                
-                suggestions.push({
-                    label: 'witness',
-                    kind: monaco.languages.CompletionItemKind.Snippet,
-                    insertText: 'let ${1:name}: ${2:type} = witness::${3:NAME};',
-                    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                    documentation: 'Witness declaration'
-                });
+                // Snippets (only at statement start)
+                const lineStart = textUntilPosition.trimStart();
+                if (lineStart === '' || lineStart === word.word) {
+                    suggestions.push({
+                        label: 'fn',
+                        kind: monaco.languages.CompletionItemKind.Snippet,
+                        insertText: 'fn ${1:name}(${2:params}) ${3:-> ReturnType }{\n\t${4}\n}',
+                        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                        documentation: 'Function definition',
+                        range: range
+                    });
+                    
+                    suggestions.push({
+                        label: 'let',
+                        kind: monaco.languages.CompletionItemKind.Snippet,
+                        insertText: 'let ${1:name}: ${2:type} = ${3:value};',
+                        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                        documentation: 'Variable declaration',
+                        range: range
+                    });
+                    
+                    suggestions.push({
+                        label: 'assert',
+                        kind: monaco.languages.CompletionItemKind.Snippet,
+                        insertText: 'assert!(${1:condition});',
+                        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                        documentation: 'Assertion statement',
+                        range: range
+                    });
+                }
 
                 return { suggestions };
             }
