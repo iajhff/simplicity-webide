@@ -178,7 +178,7 @@ pub fn ProgramTab() -> impl IntoView {
     };
     
     // Initialize CodeMirror when textarea is mounted (optional enhancement)
-    create_effect(move |_| {
+    create_effect(move |_prev_value| {
         if let Some(textarea) = textarea_ref.get() {
             // Only initialize once
             spawn_local(async move {
@@ -188,17 +188,16 @@ pub fn ProgramTab() -> impl IntoView {
                 if let Some(window) = web_sys::window() {
                     // Check if CodeMirror and our init function exist
                     let has_codemirror = js_sys::Reflect::has(&window, &"CodeMirror".into()).unwrap_or(false);
-                    let simplicity_editor = js_sys::Reflect::get(&window, &"SimplicityEditor".into()).ok();
                     
                     if has_codemirror {
-                        if let Some(editor_obj) = simplicity_editor {
+                        if let Ok(simplicity_editor) = js_sys::Reflect::get(&window, &"SimplicityEditor".into()) {
                             // Call SimplicityEditor.init() if it exists
-                            if let Ok(init_fn) = js_sys::Reflect::get(&editor_obj, &"init".into()) {
+                            if let Ok(init_fn) = js_sys::Reflect::get(&simplicity_editor, &"init".into()) {
                                 if let Some(init_fn) = init_fn.dyn_ref::<js_sys::Function>() {
                                     let textarea_id = "program-input";
                                     let initial_value = textarea.value();
                                     let _ = init_fn.call2(
-                                        &editor_obj,
+                                        &simplicity_editor,
                                         &textarea_id.into(),
                                         &initial_value.into()
                                     );
