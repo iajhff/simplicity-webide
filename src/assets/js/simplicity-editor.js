@@ -69,13 +69,33 @@
                 }
             });
             
+            // Track if we're updating from CodeMirror to prevent loops
+            let updatingFromEditor = false;
+            let lastTextareaValue = textarea.value;
+            
             // Sync changes back to the textarea so Leptos sees them
             editor.on('change', function(cm) {
+                updatingFromEditor = true;
                 textarea.value = cm.getValue();
+                lastTextareaValue = textarea.value;
                 // Trigger input event so Leptos reactive system picks it up
                 const event = new Event('input', { bubbles: true });
                 textarea.dispatchEvent(event);
+                updatingFromEditor = false;
             });
+            
+            // Watch for external changes to textarea (like from Examples dropdown)
+            // Check periodically for textarea value changes from Leptos
+            setInterval(function() {
+                if (!updatingFromEditor && textarea.value !== lastTextareaValue) {
+                    lastTextareaValue = textarea.value;
+                    editor.setValue(textarea.value);
+                    console.log('CodeMirror: Updated from external source (Examples dropdown)');
+                }
+            }, 100);
+            
+            // Store editor reference globally for debugging
+            window.codeMirrorEditor = editor;
             
             // Refresh editor immediately and after a moment to ensure proper sizing
             editor.refresh();
