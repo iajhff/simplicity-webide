@@ -57,12 +57,38 @@
                     simplicityConfig.init('monaco-editor-container', textarea.value).then(function(editor) {
                         console.log('Monaco: Initialized successfully! ✨');
                         
+                        // Track if we're updating from Monaco to prevent loops
+                        let updatingFromMonaco = false;
+                        let lastTextareaValue = textarea.value;
+                        
                         // Sync changes back to textarea for Leptos
                         editor.onDidChangeModelContent(function() {
+                            updatingFromMonaco = true;
                             textarea.value = editor.getValue();
+                            lastTextareaValue = textarea.value;
                             const event = new Event('input', { bubbles: true });
                             textarea.dispatchEvent(event);
+                            updatingFromMonaco = false;
                         });
+                        
+                        // Watch for external changes to textarea (like from Examples dropdown)
+                        // Check periodically for textarea value changes from Leptos
+                        setInterval(function() {
+                            if (!updatingFromMonaco && textarea.value !== lastTextareaValue) {
+                                lastTextareaValue = textarea.value;
+                                editor.setValue(textarea.value);
+                                console.log('Monaco: Updated from external source (Examples dropdown)');
+                            }
+                        }, 100);
+                        
+                        // Store editor reference globally for external updates
+                        window.monacoEditor = editor;
+                        window.updateMonacoEditor = function(newValue) {
+                            if (editor && newValue !== editor.getValue()) {
+                                lastTextareaValue = newValue;
+                                editor.setValue(newValue);
+                            }
+                        };
                         
                         // Handle Ctrl+Enter
                         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, function() {
