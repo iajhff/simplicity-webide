@@ -6,6 +6,80 @@ use crate::components::program_window::Program;
 use crate::components::run_window::{SignedData, TxEnv};
 use crate::util::{self, SigningKeys};
 
+/// Inject witness signature into program text
+/// Detects witness variable usage and injects the signature value
+fn inject_witness_signature(program_text: &str, signature: &str) -> String {
+    // Common witness variable names to look for
+    let witness_vars = vec!["ALICE_SIGNATURE", "SIG", "SIGNATURE"];
+    
+    // Check if program uses any witness variables
+    let mut used_witness_var = None;
+    for var in &witness_vars {
+        if program_text.contains(&format!("witness::{}", var)) {
+            used_witness_var = Some(*var);
+            break;
+        }
+    }
+    
+    let witness_var = match used_witness_var {
+        Some(var) => var,
+        None => "ALICE_SIGNATURE", // Default if none found
+    };
+    
+    // Check if witness module exists
+    if program_text.contains("mod witness") {
+        // Find and update existing witness module
+        let re = regex::Regex::new(r"mod\s+witness\s*\{[^}]*\}").unwrap();
+        if let Some(mat) = re.find(program_text) {
+            let witness_section = mat.as_str();
+            
+            // Check if signature already exists
+            if witness_section.contains(witness_var) {
+                // Replace existing signature value
+                let sig_re = regex::Regex::new(&format!(
+                    r"const\s+{}\s*:\s*Signature\s*=\s*0x[0-9a-fA-F]+;",
+                    witness_var
+                )).unwrap();
+                
+                if sig_re.is_match(witness_section) {
+                    // Replace existing signature
+                    let new_witness = sig_re.replace(
+                        witness_section,
+                        &format!("const {}: Signature = {};", witness_var, signature)
+                    );
+                    program_text.replace(witness_section, &new_witness)
+                } else {
+                    // Add signature to existing witness module
+                    let new_witness = witness_section.replace(
+                        "}",
+                        &format!("    const {}: Signature = {};\n}}", witness_var, signature)
+                    );
+                    program_text.replace(witness_section, &new_witness)
+                }
+            } else {
+                // Add signature to witness module
+                let new_witness = if witness_section.trim() == "mod witness {}" {
+                    format!("mod witness {{\n    const {}: Signature = {};\n}}", witness_var, signature)
+                } else {
+                    witness_section.replace(
+                        "}",
+                        &format!("    const {}: Signature = {};\n}}", witness_var, signature)
+                    )
+                };
+                program_text.replace(witness_section, &new_witness)
+            }
+        } else {
+            program_text.to_string()
+        }
+    } else {
+        // Create new witness module at the beginning
+        format!(
+            "mod witness {{\n    const {}: Signature = {};\n}}\n\n{}",
+            witness_var, signature, program_text
+        )
+    }
+}
+
 #[component]
 pub fn TestnetAutomationButtons() -> impl IntoView {
     let program = use_context::<Program>().expect("program should exist in context");
@@ -64,26 +138,41 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     };
     
     // Step 3: Generate sighash signatures (implements Step 7 from official guide)
-    // This generates signatures based on the transaction sighash
+    // This generates signatures based on the transaction sighash and auto-injects them
     let generate_signatures = move |_| {
         set_sign_status.set("Generating sighash signatures...".to_string());
         
         // Get the transaction sighash (this is the message to sign)
         let message = signed_data.message.get();
         
-        // Generate signatures for Alice (key 0) - you can extend this to detect
-        // which keys are needed by parsing the program
-        let mut sigs = Vec::new();
-        
-        // For now, generate Alice's signature (index 0)
-        // In a real implementation, we'd parse the program to see which signatures are needed
+        // Generate signature for Alice (key 0)
         let sig_alice = signing_keys.secret_keys[0].sign_schnorr(message);
         let sig_hex = format!("0x{}", sig_alice.serialize().as_hex());
-        sigs.push(sig_hex.clone());
         
-        set_signatures.set(sigs.clone());
         set_generated_signature.set(sig_hex.clone());
-        set_sign_status.set(format!("✓ Generated {} signature(s): {}...", sigs.len(), &sig_hex[..18]));
+        
+        // Auto-inject the signature into the program's witness section
+        let current_text = program.text.get();
+        let updated_text = inject_witness_signature(&current_text, &sig_hex);
+        
+        if updated_text != current_text {
+            program.text.set(updated_text);
+            // Trigger Monaco editor update if available
+            if let Some(window) = web_sys::window() {
+                if let Ok(update_fn) = js_sys::Reflect::get(&window, &"updateMonacoEditor".into()) {
+                    if !update_fn.is_undefined() {
+                        let _ = js_sys::Reflect::apply(
+                            &update_fn.into(),
+                            &window,
+                            &js_sys::Array::of1(&program.text.get().into()),
+                        );
+                    }
+                }
+            }
+            set_sign_status.set(format!("✓ Signature generated and injected: {}...", &sig_hex[..18]));
+        } else {
+            set_sign_status.set(format!("✓ Signature generated: {}...", &sig_hex[..18]));
+        }
     };
 
     let lookup_utxo = move |_| {
@@ -152,8 +241,8 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
             };
             let pruned = match satisfied.redeem().prune(env) {
                 Ok(x) => x,
-                Err(_e) => {
-                    set_broadcast_status.set("✗ Missing signature! Go to Key Store tab → Click 'Alice' to copy signature → Paste into your program's witness section → Try again.".to_string());
+                Err(e) => {
+                    set_broadcast_status.set(format!("✗ Transaction validation failed: {}. Check that Step 3 (signature generation) was completed and the witness data matches your program.", e));
                     set_broadcast_loading.set(false);
                     return String::new();
                 }
@@ -295,7 +384,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     if !sig.is_empty() {
                         view! {
                             <div class="step-data">
-                                <label>"Signature (copy to your program):"</label>
+                                <label>"Signature (auto-injected into program):"</label>
                                 <input
                                     type="text"
                                     readonly
@@ -308,7 +397,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                                         }
                                     }
                                 />
-                                <p class="hint">"Click to copy, then paste into your program's witness section"</p>
+                                <p class="hint">"✓ Automatically injected into witness section (click to copy if needed)"</p>
                             </div>
                         }.into_view()
                     } else {
