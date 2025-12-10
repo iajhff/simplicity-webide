@@ -1,82 +1,102 @@
-use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate, SignalWith, SignalGetUntracked};
+use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate};
 use web_sys::js_sys;
-use hex_conservative::DisplayHex;
+use simplicityhl::elements::secp256k1_zkp as secp256k1;
 
 use crate::components::program_window::Program;
 use crate::components::run_window::{SignedData, TxEnv};
 use crate::util::{self, SigningKeys};
 
-/// Inject witness signature into program text
-/// Detects witness variable usage and injects the signature value
-fn inject_witness_signature(program_text: &str, signature: &str) -> String {
-    // Common witness variable names to look for
-    let witness_vars = vec!["ALICE_SIGNATURE", "SIG", "SIGNATURE"];
+/// Detect all witness variables used in the program
+fn detect_witness_variables(program_text: &str) -> Vec<(String, String)> {
+    let mut witness_vars = Vec::new();
     
-    // Check if program uses any witness variables
-    let mut used_witness_var = None;
-    for var in &witness_vars {
-        if program_text.contains(&format!("witness::{}", var)) {
-            used_witness_var = Some(*var);
-            break;
+    // Regex to find witness::VARIABLE_NAME and infer type from context
+    let witness_re = regex::Regex::new(r"witness::([A-Z_][A-Z0-9_]*)").unwrap();
+    
+    for cap in witness_re.captures_iter(program_text) {
+        let var_name = cap[1].to_string();
+        
+        // Infer type from variable name or context
+        let var_type = if var_name.contains("SIGNATURE") || var_name == "SIG" {
+            "Signature"
+        } else if var_name.contains("PUBLIC_KEY") || var_name.contains("PUBKEY") {
+            "Pubkey"
+        } else {
+            // Default to signature for safety
+            "Signature"
+        };
+        
+        // Avoid duplicates
+        if !witness_vars.iter().any(|(name, _)| name == &var_name) {
+            witness_vars.push((var_name, var_type.to_string()));
         }
     }
     
-    let witness_var = match used_witness_var {
-        Some(var) => var,
-        None => "ALICE_SIGNATURE", // Default if none found
-    };
+    witness_vars
+}
+
+/// Generate witness values based on detected variables
+fn generate_witness_values(
+    witness_vars: &[(String, String)],
+    signing_keys: &SigningKeys,
+    sighash: secp256k1::Message,
+) -> Vec<(String, String, String)> {
+    use hex_conservative::DisplayHex;
+    let mut generated = Vec::new();
+    
+    for (var_name, var_type) in witness_vars {
+        match var_type.as_str() {
+            "Signature" => {
+                // Generate signature using Alice's key (index 0)
+                let sig = signing_keys.secret_keys[0].sign_schnorr(sighash);
+                let sig_hex = format!("0x{}", sig.serialize().as_hex());
+                generated.push((var_name.clone(), var_type.clone(), sig_hex));
+            }
+            "Pubkey" => {
+                // Use Alice's public key
+                let pk = signing_keys.secret_keys[0].x_only_public_key().0;
+                let pk_hex = format!("0x{}", pk.serialize().as_hex());
+                generated.push((var_name.clone(), var_type.clone(), pk_hex));
+            }
+            _ => {
+                // Unsupported type - skip or add placeholder
+                generated.push((
+                    var_name.clone(),
+                    var_type.clone(),
+                    "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                ));
+            }
+        }
+    }
+    
+    generated
+}
+
+/// Inject witness values into program text
+fn inject_witness_values(program_text: &str, witness_values: &[(String, String, String)]) -> String {
+    if witness_values.is_empty() {
+        return program_text.to_string();
+    }
+    
+    // Build witness module content
+    let mut witness_content = String::from("mod witness {\n");
+    for (var_name, var_type, value) in witness_values {
+        witness_content.push_str(&format!("    const {}: {} = {};\n", var_name, var_type, value));
+    }
+    witness_content.push_str("}");
     
     // Check if witness module exists
     if program_text.contains("mod witness") {
-        // Find and update existing witness module
+        // Replace existing witness module
         let re = regex::Regex::new(r"mod\s+witness\s*\{[^}]*\}").unwrap();
         if let Some(mat) = re.find(program_text) {
-            let witness_section = mat.as_str();
-            
-            // Check if signature already exists
-            if witness_section.contains(witness_var) {
-                // Replace existing signature value
-                let sig_re = regex::Regex::new(&format!(
-                    r"const\s+{}\s*:\s*Signature\s*=\s*0x[0-9a-fA-F]+;",
-                    witness_var
-                )).unwrap();
-                
-                if sig_re.is_match(witness_section) {
-                    // Replace existing signature
-                    let new_witness = sig_re.replace(
-                        witness_section,
-                        &format!("const {}: Signature = {};", witness_var, signature)
-                    );
-                    program_text.replace(witness_section, &new_witness)
-                } else {
-                    // Add signature to existing witness module
-                    let new_witness = witness_section.replace(
-                        "}",
-                        &format!("    const {}: Signature = {};\n}}", witness_var, signature)
-                    );
-                    program_text.replace(witness_section, &new_witness)
-                }
-            } else {
-                // Add signature to witness module
-                let new_witness = if witness_section.trim() == "mod witness {}" {
-                    format!("mod witness {{\n    const {}: Signature = {};\n}}", witness_var, signature)
-                } else {
-                    witness_section.replace(
-                        "}",
-                        &format!("    const {}: Signature = {};\n}}", witness_var, signature)
-                    )
-                };
-                program_text.replace(witness_section, &new_witness)
-            }
+            program_text.replace(mat.as_str(), &witness_content)
         } else {
             program_text.to_string()
         }
     } else {
         // Create new witness module at the beginning
-        format!(
-            "mod witness {{\n    const {}: Signature = {};\n}}\n\n{}",
-            witness_var, signature, program_text
-        )
+        format!("{}\n\n{}", witness_content, program_text)
     }
 }
 
@@ -100,9 +120,6 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     // Get signing keys and signed data for sighash signature generation
     let signing_keys = use_context::<SigningKeys>().expect("signing keys should exist");
     let signed_data = use_context::<SignedData>().expect("signed data should exist");
-    
-    // Track generated signatures (sighash-based)
-    let (signatures, set_signatures) = create_signal(Vec::<String>::new());
     
     // Step 1: Fund from faucet (using CORS proxy)
     let auto_fund = move |_| {
@@ -137,23 +154,38 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         });
     };
     
-    // Step 3: Generate sighash signatures (implements Step 7 from official guide)
-    // This generates signatures based on the transaction sighash and auto-injects them
+    // Step 3: Generate witness data (implements Step 7 from official guide)
+    // Detects required witness variables and generates appropriate values
     let generate_signatures = move |_| {
-        set_sign_status.set("Generating sighash signatures...".to_string());
+        set_sign_status.set("Analyzing program witness requirements...".to_string());
         
         // Get the transaction sighash (this is the message to sign)
         let message = signed_data.message.get();
         
-        // Generate signature for Alice (key 0)
-        let sig_alice = signing_keys.secret_keys[0].sign_schnorr(message);
-        let sig_hex = format!("0x{}", sig_alice.serialize().as_hex());
-        
-        set_generated_signature.set(sig_hex.clone());
-        
-        // Auto-inject the signature into the program's witness section
+        // Detect what witness variables the program needs
         let current_text = program.text.get();
-        let updated_text = inject_witness_signature(&current_text, &sig_hex);
+        let witness_vars = detect_witness_variables(&current_text);
+        
+        if witness_vars.is_empty() {
+            set_sign_status.set("✗ No witness variables found in program. Add witness::ALICE_SIGNATURE or similar to your main function.".to_string());
+            return;
+        }
+        
+        // Generate values for detected witness variables
+        let witness_values = generate_witness_values(&witness_vars, &signing_keys, message);
+        
+        // Display what was generated
+        let summary: Vec<String> = witness_values.iter()
+            .map(|(name, typ, val)| format!("{}:{} = {}...", name, typ, &val[..std::cmp::min(18, val.len())]))
+            .collect();
+        
+        // Store first signature for display
+        if let Some((_, _, sig)) = witness_values.iter().find(|(_, typ, _)| typ == "Signature") {
+            set_generated_signature.set(sig.clone());
+        }
+        
+        // Auto-inject all witness values into the program
+        let updated_text = inject_witness_values(&current_text, &witness_values);
         
         if updated_text != current_text {
             program.text.set(updated_text);
@@ -169,9 +201,9 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     }
                 }
             }
-            set_sign_status.set(format!("✓ Signature generated and injected: {}...", &sig_hex[..18]));
+            set_sign_status.set(format!("✓ Generated {} witness value(s): {}", witness_values.len(), summary.join(", ")));
         } else {
-            set_sign_status.set(format!("✓ Signature generated: {}...", &sig_hex[..18]));
+            set_sign_status.set("✓ Witness values generated (no changes needed)".to_string());
         }
     };
 
@@ -369,7 +401,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
             <div class="workflow-step">
                 <div class="step-header">
                     <span class="step-number">"3"</span>
-                    <h4>"Generate Signature"</h4>
+                    <h4>"Generate Witness Data"</h4>
                 </div>
                 <button
                     class="workflow-button"
@@ -377,14 +409,14 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     disabled=move || !lookup_status.get().contains("Found") && !lookup_status.get().contains("Auto-filled")
                 >
                     <i class="fas fa-key"></i>
-                    " Generate Sighash Signatures"
+                    " Generate Witness Values"
                 </button>
                 {move || {
                     let sig = generated_signature.get();
                     if !sig.is_empty() {
                         view! {
                             <div class="step-data">
-                                <label>"Signature (auto-injected into program):"</label>
+                                <label>"Primary Signature:"</label>
                                 <input
                                     type="text"
                                     readonly
@@ -397,7 +429,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                                         }
                                     }
                                 />
-                                <p class="hint">"✓ Automatically injected into witness section (click to copy if needed)"</p>
+                                <p class="hint">"✓ All witness values auto-injected into program (click to copy)"</p>
                             </div>
                         }.into_view()
                     } else {

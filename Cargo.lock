@@ -1679,6 +1679,7 @@ dependencies = [
  "js-sys",
  "leptos",
  "leptos_router",
+ "regex",
  "serde",
  "serde_json",
  "simplicityhl",
