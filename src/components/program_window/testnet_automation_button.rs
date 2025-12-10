@@ -6,33 +6,117 @@ use crate::components::program_window::Program;
 use crate::components::run_window::{SignedData, TxEnv};
 use crate::util::{self, SigningKeys};
 
-/// Detect all witness variables used in the program
+/// Analyze program structure to infer contract type and requirements
+fn analyze_program_structure(program_text: &str) -> ProgramAnalysis {
+    let mut analysis = ProgramAnalysis {
+        has_signature_verification: false,
+        has_hash_check: false,
+        has_timelock: false,
+        has_conditional: false,
+        signature_count: 0,
+        uses_preimage: false,
+    };
+    
+    // Detect signature verification
+    if program_text.contains("jet::bip_0340_verify") {
+        analysis.has_signature_verification = true;
+        // Count how many times verify is called
+        analysis.signature_count = program_text.matches("jet::bip_0340_verify").count();
+    }
+    
+    // Detect hash operations (might need preimage)
+    if program_text.contains("jet::sha_256") || program_text.contains("jet::eq_256") {
+        analysis.has_hash_check = true;
+    }
+    
+    // Detect timelock
+    if program_text.contains("jet::check_lock_time") || program_text.contains("jet::check_sequence") {
+        analysis.has_timelock = true;
+    }
+    
+    // Detect conditional logic (might need sum types)
+    if program_text.contains("match ") || program_text.contains("if ") {
+        analysis.has_conditional = true;
+    }
+    
+    // Detect preimage usage
+    if program_text.contains("preimage") {
+        analysis.uses_preimage = true;
+    }
+    
+    analysis
+}
+
+#[derive(Debug)]
+struct ProgramAnalysis {
+    has_signature_verification: bool,
+    has_hash_check: bool,
+    has_timelock: bool,
+    has_conditional: bool,
+    signature_count: usize,
+    uses_preimage: bool,
+}
+
+/// Detect all witness variables used in the program with smart type inference
 fn detect_witness_variables(program_text: &str) -> Vec<(String, String)> {
     let mut witness_vars = Vec::new();
     
-    // Regex to find witness::VARIABLE_NAME and infer type from context
+    // Analyze program to understand what it does
+    let analysis = analyze_program_structure(program_text);
+    
+    // Regex to find witness::VARIABLE_NAME
     let witness_re = regex::Regex::new(r"witness::([A-Z_][A-Z0-9_]*)").unwrap();
     
     for cap in witness_re.captures_iter(program_text) {
         let var_name = cap[1].to_string();
         
-        // Infer type from variable name or context
-        let var_type = if var_name.contains("SIGNATURE") || var_name == "SIG" {
-            "Signature"
-        } else if var_name.contains("PUBLIC_KEY") || var_name.contains("PUBKEY") {
-            "Pubkey"
-        } else {
-            // Default to signature for safety
-            "Signature"
-        };
+        // Smart type inference based on:
+        // 1. Variable name
+        // 2. Program structure analysis
+        // 3. Context of usage
+        let var_type = infer_witness_type(&var_name, &analysis, program_text);
         
         // Avoid duplicates
         if !witness_vars.iter().any(|(name, _)| name == &var_name) {
-            witness_vars.push((var_name, var_type.to_string()));
+            witness_vars.push((var_name, var_type));
         }
     }
     
     witness_vars
+}
+
+/// Infer witness variable type from name and program context
+fn infer_witness_type(var_name: &str, analysis: &ProgramAnalysis, program_text: &str) -> String {
+    // Check variable name patterns first
+    if var_name.contains("SIGNATURE") || var_name == "SIG" || var_name.ends_with("_SIG") {
+        return "Signature".to_string();
+    }
+    
+    if var_name.contains("PUBLIC_KEY") || var_name.contains("PUBKEY") || var_name == "PK" {
+        return "Pubkey".to_string();
+    }
+    
+    if var_name.contains("PREIMAGE") || var_name.contains("SECRET") {
+        return "u256".to_string(); // Preimages are typically u256
+    }
+    
+    // Check if it's used in a conditional (might be sum type)
+    if analysis.has_conditional {
+        // Look for the variable in match or if expressions
+        let var_ref = format!("witness::{}", var_name);
+        if program_text.contains(&format!("match {}", var_ref)) 
+            || program_text.contains(&format!("unwrap_left({})", var_ref)) 
+            || program_text.contains(&format!("unwrap_right({})", var_ref)) {
+            return "SumType".to_string(); // Complex sum type - needs manual definition
+        }
+    }
+    
+    // Default: if program has signature verification, assume it's a signature
+    if analysis.has_signature_verification {
+        "Signature".to_string()
+    } else {
+        "u256".to_string() // Generic fallback
+    }
 }
 
 /// Generate witness values based on detected variables
@@ -40,9 +124,10 @@ fn generate_witness_values(
     witness_vars: &[(String, String)],
     signing_keys: &SigningKeys,
     sighash: secp256k1::Message,
-) -> Vec<(String, String, String)> {
+) -> Result<Vec<(String, String, String)>, String> {
     use hex_conservative::DisplayHex;
     let mut generated = Vec::new();
+    let mut unsupported = Vec::new();
     
     for (var_name, var_type) in witness_vars {
         match var_type.as_str() {
@@ -58,18 +143,34 @@ fn generate_witness_values(
                 let pk_hex = format!("0x{}", pk.serialize().as_hex());
                 generated.push((var_name.clone(), var_type.clone(), pk_hex));
             }
-            _ => {
-                // Unsupported type - skip or add placeholder
+            "u256" => {
+                // For preimages or generic u256, use placeholder
+                // User needs to manually provide the actual value
+                unsupported.push(format!("{}:u256 (preimage/hash - requires manual input)", var_name));
                 generated.push((
                     var_name.clone(),
                     var_type.clone(),
                     "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
                 ));
             }
+            "SumType" => {
+                // Complex sum type - cannot auto-generate
+                unsupported.push(format!("{}:SumType (complex type - requires manual definition)", var_name));
+            }
+            _ => {
+                unsupported.push(format!("{}:{} (unknown type)", var_name, var_type));
+            }
         }
     }
     
-    generated
+    if !unsupported.is_empty() {
+        return Err(format!(
+            "Cannot auto-generate witness for: {}. Please define these manually in mod witness {{}}",
+            unsupported.join(", ")
+        ));
+    }
+    
+    Ok(generated)
 }
 
 /// Inject witness values into program text
@@ -172,7 +273,13 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         }
         
         // Generate values for detected witness variables
-        let witness_values = generate_witness_values(&witness_vars, &signing_keys, message);
+        let witness_values = match generate_witness_values(&witness_vars, &signing_keys, message) {
+            Ok(values) => values,
+            Err(err) => {
+                set_sign_status.set(format!("⚠ {}", err));
+                return;
+            }
+        };
         
         // Display what was generated
         let summary: Vec<String> = witness_values.iter()
