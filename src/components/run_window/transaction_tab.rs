@@ -9,6 +9,7 @@ use simplicity::jet::elements::ElementsEnv;
 use simplicityhl::{elements, simplicity};
 
 use crate::components::program_window::Program;
+use crate::components::program_window::testnet_automation_button::TestnetAutomationButtons;
 use crate::components::string_box::ErrorBox;
 use crate::transaction::TxParams;
 
@@ -106,6 +107,8 @@ pub fn TransactionTab() -> impl IntoView {
 
     view! {
         <div class="tab-content transaction-tab">
+            <TestnetAutomationButtons />
+            
             <p class="tab-description">
                 "Only a limited number of fields are available. "
                 "More customization will follow in future updates."

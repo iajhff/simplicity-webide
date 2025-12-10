@@ -1,0 +1,138 @@
+// Unified Workflow Styles
+.unified-workflow {
+    margin-bottom: 30px;
+    padding: 24px;
+    background: linear-gradient(135deg, rgba(255, 149, 23, 0.05) 0%, rgba(33, 150, 243, 0.05) 100%);
+    border: 1px solid rgba(255, 149, 23, 0.2);
+    border-radius: 12px;
+
+    .workflow-title {
+        margin: 0 0 24px 0;
+        color: #FF9517;
+        font-size: 20px;
+        font-weight: 700;
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .workflow-step {
+        margin-bottom: 20px;
+        padding: 20px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        transition: all 0.3s ease;
+
+        &:hover {
+            border-color: rgba(255, 149, 23, 0.3);
+            background: rgba(0, 0, 0, 0.4);
+        }
+
+        &:last-child {
+            margin-bottom: 0;
+        }
+
+        .step-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+
+            .step-number {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 32px;
+                height: 32px;
+                background: linear-gradient(135deg, #FF9517 0%, #FF6B17 100%);
+                color: #fff;
+                border-radius: 50%;
+                font-weight: 700;
+                font-size: 16px;
+                flex-shrink: 0;
+            }
+
+            h4 {
+                margin: 0;
+                color: rgba(255, 255, 255, 0.95);
+                font-size: 16px;
+                font-weight: 600;
+            }
+        }
+
+        .workflow-button {
+            width: 100%;
+            padding: 14px 20px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+
+            i {
+                font-size: 16px;
+            }
+
+            &:hover:not(:disabled) {
+                background: rgba(255, 255, 255, 0.12);
+                border-color: #FF9517;
+                transform: translateY(-1px);
+            }
+
+            &:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+            &.primary {
+                background: linear-gradient(135deg, #FF9517 0%, #FF6B17 100%);
+                border-color: transparent;
+                font-weight: 600;
+
+                &:hover:not(:disabled) {
+                    background: linear-gradient(135deg, #FFa527 0%, #FF7B27 100%);
+                    box-shadow: 0 4px 16px rgba(255, 149, 23, 0.4);
+                }
+            }
+        }
+
+        .step-status {
+            margin: 12px 0 0 0;
+            padding: 10px 14px;
+            background: rgba(0, 0, 0, 0.4);
+            border-left: 3px solid #FF9517;
+            border-radius: 4px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.9);
+            font-family: 'Ubuntu Mono', monospace;
+            line-height: 1.5;
+        }
+
+        .manual-instruction {
+            padding: 14px 18px;
+            background: rgba(33, 150, 243, 0.12);
+            border: 1px solid rgba(33, 150, 243, 0.3);
+            border-radius: 6px;
+
+            p {
+                margin: 0;
+                color: rgba(255, 255, 255, 0.9);
+                font-size: 14px;
+                line-height: 1.6;
+
+                strong {
+                    color: #4FC3F7;
+                    font-weight: 600;
+                }
+            }
+        }
+    }
+}

@@ -4,6 +4,7 @@ mod help_button;
 mod program_tab;
 mod run_button;
 mod share_button;
+pub mod testnet_automation_button;
 mod tools_dropdown;
 mod transaction_button;
 
