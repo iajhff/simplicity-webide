@@ -1,9 +1,10 @@
-use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate, SignalWith};
+use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate, SignalWith, SignalGetUntracked};
 use web_sys::js_sys;
+use hex_conservative::DisplayHex;
 
 use crate::components::program_window::Program;
-use crate::components::run_window::TxEnv;
-use crate::util;
+use crate::components::run_window::{SignedData, TxEnv};
+use crate::util::{self, SigningKeys};
 
 #[component]
 pub fn TestnetAutomationButtons() -> impl IntoView {
@@ -14,12 +15,22 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     let (fund_loading, set_fund_loading) = create_signal(false);
     let (lookup_status, set_lookup_status) = create_signal(String::new());
     let (lookup_loading, set_lookup_loading) = create_signal(false);
+    let (sign_status, set_sign_status) = create_signal(String::new());
+    let (generated_signature, set_generated_signature) = create_signal(String::new());
     let (broadcast_status, set_broadcast_status) = create_signal(String::new());
     let (broadcast_loading, set_broadcast_loading) = create_signal(false);
     
     let funding_txid = create_rw_signal(String::new());
+    let (current_address, set_current_address) = create_signal(String::new());
     
-    // One-click auto-fund
+    // Get signing keys and signed data for sighash signature generation
+    let signing_keys = use_context::<SigningKeys>().expect("signing keys should exist");
+    let signed_data = use_context::<SignedData>().expect("signed data should exist");
+    
+    // Track generated signatures (sighash-based)
+    let (signatures, set_signatures) = create_signal(Vec::<String>::new());
+    
+    // Step 1: Fund from faucet (using CORS proxy)
     let auto_fund = move |_| {
         let address = program
             .cmr()
@@ -33,22 +44,46 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
             return;
         }
 
+        set_current_address.set(address.clone());
         set_fund_loading.set(true);
-        set_fund_status.set("Requesting funds from faucet...".to_string());
+        set_fund_status.set("Requesting funds via CORS proxy...".to_string());
 
         spawn_local(async move {
             match call_fund_from_faucet(&address).await {
                 Ok(txid) => {
                     funding_txid.set(txid.clone());
-                    set_fund_status.set(format!("Funded! Txid: {}...", &txid[..16]));
+                    set_fund_status.set(format!("✓ Funded! Txid: {}...", &txid[..16]));
                     set_fund_loading.set(false);
                 }
                 Err(err) => {
-                    set_fund_status.set(format!("{}", err));
+                    set_fund_status.set(format!("✗ {}",err));
                     set_fund_loading.set(false);
                 }
             }
         });
+    };
+    
+    // Step 3: Generate sighash signatures (implements Step 7 from official guide)
+    // This generates signatures based on the transaction sighash
+    let generate_signatures = move |_| {
+        set_sign_status.set("Generating sighash signatures...".to_string());
+        
+        // Get the transaction sighash (this is the message to sign)
+        let message = signed_data.message.get();
+        
+        // Generate signatures for Alice (key 0) - you can extend this to detect
+        // which keys are needed by parsing the program
+        let mut sigs = Vec::new();
+        
+        // For now, generate Alice's signature (index 0)
+        // In a real implementation, we'd parse the program to see which signatures are needed
+        let sig_alice = signing_keys.secret_keys[0].sign_schnorr(message);
+        let sig_hex = format!("0x{}", sig_alice.serialize().as_hex());
+        sigs.push(sig_hex.clone());
+        
+        set_signatures.set(sigs.clone());
+        set_generated_signature.set(sig_hex.clone());
+        set_sign_status.set(format!("✓ Generated {} signature(s): {}...", sigs.len(), &sig_hex[..18]));
     };
 
     let lookup_utxo = move |_| {
@@ -173,6 +208,38 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     }}
                 </button>
                 {move || {
+                    let addr = current_address.get();
+                    let txid = funding_txid.get();
+                    if !addr.is_empty() || !txid.is_empty() {
+                        view! {
+                            <div class="step-data">
+                                {if !addr.is_empty() {
+                                    view! {
+                                        <>
+                                            <label>"Address:"</label>
+                                            <input type="text" readonly value=addr />
+                                        </>
+                                    }.into_view()
+                                } else {
+                                    view! { <span style="display:none"></span> }.into_view()
+                                }}
+                                {if !txid.is_empty() {
+                                    view! {
+                                        <>
+                                            <label>"Funding Txid:"</label>
+                                            <input type="text" readonly value=txid />
+                                        </>
+                                    }.into_view()
+                                } else {
+                                    view! { <span style="display:none"></span> }.into_view()
+                                }}
+                            </div>
+                        }.into_view()
+                    } else {
+                        view! { <span style="display:none"></span> }.into_view()
+                    }
+                }}
+                {move || {
                     let status = fund_status.get();
                     if !status.is_empty() {
                         view! { <p class="step-status">{status}</p> }.into_view()
@@ -215,9 +282,47 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     <span class="step-number">"3"</span>
                     <h4>"Generate Signature"</h4>
                 </div>
-                <div class="manual-instruction">
-                    <p>"Go to "<strong>"Key Store"</strong>" tab below → Click "<strong>"Alice"</strong>" button → Paste signature into your program"</p>
-                </div>
+                <button
+                    class="workflow-button"
+                    on:click=generate_signatures
+                    disabled=move || !lookup_status.get().contains("Found") && !lookup_status.get().contains("Auto-filled")
+                >
+                    <i class="fas fa-key"></i>
+                    " Generate Sighash Signatures"
+                </button>
+                {move || {
+                    let sig = generated_signature.get();
+                    if !sig.is_empty() {
+                        view! {
+                            <div class="step-data">
+                                <label>"Signature (copy to your program):"</label>
+                                <input
+                                    type="text"
+                                    readonly
+                                    value=sig.clone()
+                                    on:click=move |e| {
+                                        let target = leptos::event_target::<web_sys::HtmlInputElement>(&e);
+                                        target.select();
+                                        if let Some(window) = web_sys::window() {
+                                            let _ = window.navigator().clipboard().write_text(&sig);
+                                        }
+                                    }
+                                />
+                                <p class="hint">"Click to copy, then paste into your program's witness section"</p>
+                            </div>
+                        }.into_view()
+                    } else {
+                        view! { <span style="display:none"></span> }.into_view()
+                    }
+                }}
+                {move || {
+                    let status = sign_status.get();
+                    if !status.is_empty() {
+                        view! { <p class="step-status">{status}</p> }.into_view()
+                    } else {
+                        view! { <span style="display:none"></span> }.into_view()
+                    }
+                }}
             </div>
 
             <div class="workflow-step">

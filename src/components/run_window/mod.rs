@@ -2,6 +2,7 @@ mod execution_tab;
 mod hash_store_tab;
 mod key_store_tab;
 mod transaction_tab;
+mod deploy_tab;
 
 use crate::components::app::ActiveRunTab;
 use leptos::{component, use_context, view, IntoView};
@@ -10,6 +11,7 @@ use self::execution_tab::ExecutionTab;
 use self::hash_store_tab::HashStoreTab;
 use self::key_store_tab::KeyStoreTab;
 use self::transaction_tab::TransactionTab;
+use self::deploy_tab::DeployTab;
 use crate::components::navbar::{Navbar, Tab};
 
 pub use self::hash_store_tab::HashCount;
@@ -33,6 +35,9 @@ pub fn RunWindow() -> impl IntoView {
             </Tab>
             <Tab name="Hash Store">
                 <HashStoreTab />
+            </Tab>
+            <Tab name="Deploy">
+                <DeployTab />
             </Tab>
         </Navbar>
     }

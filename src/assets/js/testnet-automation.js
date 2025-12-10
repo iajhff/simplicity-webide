@@ -10,57 +10,34 @@ class TestnetAutomation {
     }
 
     /**
-     * Fund an address from the Liquid testnet faucet
+     * Fund an address from the Liquid testnet faucet using CORS proxy
      * @param {string} address - The address to fund
-     * @returns {Promise<{txid: string, status: string}>}
+     * @returns {Promise<{txid: string}>}
      */
     async fundFromFaucet(address) {
+        const faucetUrl = `https://liquidtestnet.com/faucet?address=${encodeURIComponent(address)}&action=lbtc`;
+        
+        // Use CORS proxy
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(faucetUrl)}`;
+        
         try {
-            // Direct URL that works with curl
-            const faucetUrl = `https://liquidtestnet.com/faucet?address=${encodeURIComponent(address)}&action=lbtc`;
-            
-            console.log('Requesting funds from faucet for:', address);
-            
-            // Use AllOrigins CORS proxy (more reliable than corsproxy.io)
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(faucetUrl)}`;
-            
             const response = await fetch(proxyUrl);
-            
-            if (!response.ok) {
-                throw new Error(`Faucet returned status ${response.status}`);
-            }
-            
             const html = await response.text();
-            console.log('Faucet response received');
             
-            // Check for errors in response
-            if (html.includes('Error') && !html.includes('Error:')) {
-                // If it just has "Error" heading but no actual error, might be OK
-                const errorMatch = html.match(/Error\s*<\/h3>\s*<p>([^<]+)/);
-                if (errorMatch && errorMatch[1].trim()) {
-                    throw new Error(errorMatch[1].trim());
-                }
-            }
-            
-            // Parse the txid from the HTML response
-            // Look for a 64-character hex string (transaction ID)
+            // Extract txid from HTML response
             const txidMatch = html.match(/([a-f0-9]{64})/);
             if (txidMatch) {
-                console.log('Funding successful! Txid:', txidMatch[1]);
-                return {
-                    txid: txidMatch[1],
-                    status: 'success'
-                };
+                return { txid: txidMatch[1] };
             }
             
-            // Check if rate limited
+            // Check for rate limiting
             if (html.toLowerCase().includes('limit') || html.toLowerCase().includes('wait')) {
-                throw new Error('Rate limited - please wait a few minutes before requesting again');
+                throw new Error('Rate limited - please wait before requesting again');
             }
             
-            throw new Error('Could not parse transaction ID from faucet response');
+            throw new Error('Could not extract txid from faucet response');
         } catch (error) {
-            console.error('Faucet funding error:', error);
+            console.error('Faucet error:', error);
             throw error;
         }
     }
