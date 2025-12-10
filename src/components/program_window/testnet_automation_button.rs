@@ -87,8 +87,17 @@ fn detect_witness_variables(program_text: &str) -> Vec<(String, String)> {
 
 /// Infer witness variable type from name and program context
 fn infer_witness_type(var_name: &str, analysis: &ProgramAnalysis, program_text: &str) -> String {
-    // Check variable name patterns first
+    // Check for multi-signature patterns
+    if var_name.contains("2_OF_3") || var_name.contains("MULTISIG") || var_name.contains("_OF_") {
+        return "MultiSig".to_string(); // Complex array of optional signatures
+    }
+    
+    // Check variable name patterns
     if var_name.contains("SIGNATURE") || var_name == "SIG" || var_name.ends_with("_SIG") {
+        // If multiple signatures are needed, it might be an array
+        if analysis.signature_count > 1 {
+            return "MultiSig".to_string();
+        }
         return "Signature".to_string();
     }
     
@@ -142,6 +151,13 @@ fn generate_witness_values(
                 let pk = signing_keys.secret_keys[0].x_only_public_key().0;
                 let pk_hex = format!("0x{}", pk.serialize().as_hex());
                 generated.push((var_name.clone(), var_type.clone(), pk_hex));
+            }
+            "MultiSig" => {
+                // Multi-signature array with optional values - too complex to auto-generate
+                unsupported.push(format!(
+                    "{}:MultiSig (array of optional signatures - requires manual definition. See examples dropdown for template)",
+                    var_name
+                ));
             }
             "u256" => {
                 // For preimages or generic u256, use placeholder
