@@ -772,6 +772,19 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                                                           field.type_name == "u256" || 
                                                           field.type_name == "Pubkey";
                                         
+                                        // Clone field name for closures
+                                        let field_name_for_value = field_name.clone();
+                                        
+                                        // Create a reactive getter for this field's value
+                                        let get_field_value = move || {
+                                            witness_fields.with(|fields| {
+                                                fields.iter()
+                                                    .find(|f| f.name == field_name_for_value)
+                                                    .map(|f| f.value.clone())
+                                                    .unwrap_or_default()
+                                            })
+                                        };
+                                        
                                         view! {
                                             <div class="witness-field">
                                                 <label>
@@ -781,7 +794,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                                                 <input
                                                     type="text"
                                                     placeholder=field.placeholder.clone()
-                                                    value=field.value.clone()
+                                                    prop:value=get_field_value
                                                     on:input=move |e| {
                                                         let new_value = leptos::event_target_value(&e);
                                                         witness_fields.update(|fields| {
