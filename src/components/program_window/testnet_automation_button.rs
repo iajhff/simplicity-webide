@@ -1,5 +1,6 @@
 use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, For, IntoView, SignalGet, SignalSet, SignalUpdate, SignalWith};
 use web_sys::js_sys;
+use wasm_bindgen::JsCast;
 use simplicityhl::elements::secp256k1_zkp as secp256k1;
 use hex_conservative::DisplayHex;
 
@@ -308,6 +309,8 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     let (broadcast_status, set_broadcast_status) = create_signal(String::new());
     let (broadcast_loading, set_broadcast_loading) = create_signal(false);
     let (spending_txid, set_spending_txid) = create_signal(String::new());
+    let (raw_tx_hex, set_raw_tx_hex) = create_signal(String::new());
+    let (tx_confirmed, set_tx_confirmed) = create_signal(false);
     
     let funding_txid = create_rw_signal(String::new());
     let (current_address, set_current_address) = create_signal(String::new());
@@ -550,22 +553,54 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
             return;
         }
 
+        // Store raw transaction hex for display
+        set_raw_tx_hex.set(raw_tx.clone());
         set_broadcast_status.set("Broadcasting to network...".to_string());
 
         spawn_local(async move {
             match call_broadcast_transaction(&raw_tx).await {
                 Ok((spending_tx, explorer_url)) => {
-                    // Log for debugging
-                    web_sys::console::log_1(&format!("✓ Spending transaction broadcast! Txid: {}", spending_tx).into());
-                    web_sys::console::log_1(&format!("Explorer URL: {}", explorer_url).into());
-                    
                     set_spending_txid.set(spending_tx.clone());
-                    set_broadcast_status.set(format!("✓ Spending transaction broadcast! Txid: {}", spending_tx));
-                    set_broadcast_loading.set(false);
+                    set_broadcast_status.set("⏳ Checking confirmation...".to_string());
                     
-                    // Open the SPENDING transaction (not the funding transaction)
-                    if let Some(window) = web_sys::window() {
-                        let _ = window.open_with_url_and_target(&explorer_url, "_blank");
+                    // Poll for transaction confirmation
+                    let txid = spending_tx.clone();
+                    let mut attempts = 0;
+                    let max_attempts = 30; // 30 attempts * 2 seconds = 1 minute
+                    
+                    loop {
+                        gloo_timers::future::TimeoutFuture::new(2000).await;
+                        
+                        match check_tx_confirmation(&txid).await {
+                            Ok(true) => {
+                                set_tx_confirmed.set(true);
+                                set_broadcast_status.set(format!("✓ Transaction confirmed! Txid: {}", spending_tx));
+                                set_broadcast_loading.set(false);
+                                
+                                // Open explorer
+                                if let Some(window) = web_sys::window() {
+                                    let _ = window.open_with_url_and_target(&explorer_url, "_blank");
+                                }
+                                break;
+                            }
+                            Ok(false) => {
+                                attempts += 1;
+                                if attempts >= max_attempts {
+                                    set_broadcast_status.set(format!("⚠ Transaction broadcast (confirmation pending). Txid: {}", spending_tx));
+                                    set_broadcast_loading.set(false);
+                                    break;
+                                }
+                                set_broadcast_status.set(format!("⏳ Waiting for confirmation... ({}/{})", attempts, max_attempts));
+                            }
+                            Err(_) => {
+                                attempts += 1;
+                                if attempts >= max_attempts {
+                                    set_broadcast_status.set(format!("⚠ Transaction broadcast (confirmation check failed). Txid: {}", spending_tx));
+                                    set_broadcast_loading.set(false);
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 Err(err) => {
@@ -812,6 +847,33 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     <span class="step-number">"4"</span>
                     <h4>"Broadcast Transaction"</h4>
                 </div>
+                
+                {move || {
+                    let raw_hex = raw_tx_hex.get();
+                    if !raw_hex.is_empty() {
+                        view! {
+                            <div class="step-data" style="margin-bottom: 12px;">
+                                <label>"Raw Transaction Hex:"</label>
+                                <textarea
+                                    readonly
+                                    rows="4"
+                                    style="font-family: monospace; font-size: 11px; resize: vertical; width: 100%; background: #1e1e1e; border: 1px solid #333; color: #d4d4d4; padding: 8px; border-radius: 4px;"
+                                    on:click=move |e| {
+                                        let target = leptos::event_target::<web_sys::HtmlTextAreaElement>(&e);
+                                        target.select();
+                                    }
+                                >{raw_hex.clone()}</textarea>
+                                <p class="hint" style="margin-top: 4px;">
+                                    <i class="fas fa-info-circle"></i>
+                                    " Raw transaction ready to broadcast (click to select all)"
+                                </p>
+                            </div>
+                        }.into_view()
+                    } else {
+                        view! { <span style="display:none"></span> }.into_view()
+                    }
+                }}
+                
                 <button
                     class="workflow-button primary"
                     on:click=broadcast_tx
@@ -820,7 +882,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     {move || if broadcast_loading.get() {
                         view! { <><i class="fas fa-spinner fa-spin"></i>" Broadcasting..."</> }
                     } else if !broadcast_status.get().is_empty() && broadcast_status.get().contains("✓") {
-                        view! { <><i class="fas fa-check-circle"></i>" Transaction Sent!"</> }
+                        view! { <><i class="fas fa-check-circle"></i>" Transaction Confirmed!"</> }
                     } else {
                         view! { <><i class="fas fa-rocket"></i>" Broadcast to Network"</> }
                     }}
@@ -935,6 +997,29 @@ async fn call_lookup_utxo(txid: &str, address: &str) -> Result<(u32, u64), Strin
         .ok_or("value is not a number")? as u64;
     
     Ok((vout, value))
+}
+
+async fn check_tx_confirmation(txid: &str) -> Result<bool, String> {
+    let window = web_sys::window().ok_or("No window")?;
+    let automation_class = js_sys::Reflect::get(&window, &"TestnetAutomation".into())
+        .map_err(|_| "TestnetAutomation not found")?;
+    
+    let check_fn = js_sys::Reflect::get(&automation_class, &"checkTransactionConfirmation".into())
+        .map_err(|_| "checkTransactionConfirmation not found")?
+        .dyn_into::<js_sys::Function>()
+        .map_err(|_| "checkTransactionConfirmation is not a function")?;
+    
+    let promise = check_fn.call1(&automation_class, &txid.into())
+        .map_err(|e| format!("{:?}", e))?
+        .dyn_into::<js_sys::Promise>()
+        .map_err(|_| "Not a promise")?;
+    
+    let result = wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .map_err(|e| format!("{:?}", e))?;
+    
+    // Result should be a boolean
+    Ok(result.as_bool().unwrap_or(false))
 }
 
 async fn call_broadcast_transaction(raw_tx: &str) -> Result<(String, String), String> {

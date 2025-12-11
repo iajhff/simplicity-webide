@@ -169,6 +169,27 @@ class TestnetAutomation {
     }
 
     /**
+     * Check if transaction is confirmed (in a block)
+     * @param {string} txid - Transaction ID to check
+     * @returns {Promise<boolean>}
+     */
+    async checkTransactionConfirmation(txid) {
+        try {
+            const response = await fetch(`${this.ESPLORA_API}/tx/${txid}/status`);
+            if (!response.ok) {
+                return false;
+            }
+            
+            const status = await response.json();
+            // Transaction is confirmed if it has a block_height
+            return status.confirmed === true || (status.block_height && status.block_height > 0);
+        } catch (error) {
+            console.error('Confirmation check error:', error);
+            return false;
+        }
+    }
+
+    /**
      * Wait for transaction confirmation
      * @param {string} txid - Transaction ID to wait for
      * @param {number} maxAttempts - Maximum number of attempts
