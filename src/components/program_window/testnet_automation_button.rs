@@ -1,6 +1,10 @@
-use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate};
+use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate, SignalWith};
 use web_sys::js_sys;
 use simplicityhl::elements::secp256k1_zkp as secp256k1;
+use simplicityhl::{WitnessValues, Value};
+use simplicityhl::str::WitnessName;
+use std::collections::HashMap;
+use hex_conservative::DisplayHex;
 
 use crate::components::program_window::Program;
 use crate::components::run_window::{SignedData, TxEnv};
@@ -283,9 +287,9 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     let (broadcast_loading, set_broadcast_loading) = create_signal(false);
     let (spending_txid, set_spending_txid) = create_signal(String::new());
     
-    // Multisig signature selection
-    let (show_sig_selector, set_show_sig_selector) = create_signal(false);
-    let (selected_keys, set_selected_keys) = create_signal(Vec::<usize>::new());
+    // Witness value management
+    let (detected_witness_vars, set_detected_witness_vars) = create_signal(Vec::<(String, String)>::new());
+    let (witness_field_values, set_witness_field_values) = create_signal(HashMap::<String, String>::new());
     
     let funding_txid = create_rw_signal(String::new());
     let (current_address, set_current_address) = create_signal(String::new());
