@@ -379,14 +379,36 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         // Get the transaction sighash (this is the message to sign)
         let message = signed_data.message.get();
         
-        // Auto-fill Signature fields
+        // Auto-fill Signature and MultiSig fields
         let mut filled_any = false;
         witness_fields.update(|fields| {
             for field in fields.iter_mut() {
                 if field.type_name == "Signature" || field.type_name == "[u8; 64]" {
-                    // Generate signature using first key
+                    // Generate signature using first key (Alice)
                     let signature = signing_keys.secret_keys[0].sign_schnorr(message);
                     field.value = format!("0x{}", signature.as_ref().to_lower_hex_string());
+                    filled_any = true;
+                } else if field.type_name.starts_with("[Option<[u8; 64]>;") {
+                    // Multisig array - generate signatures from multiple keys
+                    let size = field.type_name
+                        .trim_start_matches("[Option<[u8; 64]>; ")
+                        .trim_end_matches(']')
+                        .parse::<usize>()
+                        .unwrap_or(3);
+                    
+                    // For 2-of-3, use Alice and Bob (keys 0 and 1), leave slot 2 as None
+                    let mut sigs = Vec::new();
+                    for i in 0..size {
+                        if i < 2 {
+                            // Generate signature for first 2 keys
+                            let sig = signing_keys.secret_keys[i].sign_schnorr(message);
+                            sigs.push(format!("Some(0x{})", sig.as_ref().to_lower_hex_string()));
+                        } else {
+                            sigs.push("None".to_string());
+                        }
+                    }
+                    
+                    field.value = format!("[{}]", sigs.join(", "));
                     filled_any = true;
                 }
             }
