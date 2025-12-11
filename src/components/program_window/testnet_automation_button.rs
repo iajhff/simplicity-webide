@@ -468,17 +468,36 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                                     view! {
                                         <>
                                             <label>"Address:"</label>
-                                            <input type="text" readonly value=addr />
+                                            <input type="text" readonly value=addr.clone() on:click=move |e| {
+                                                let target = leptos::event_target::<web_sys::HtmlInputElement>(&e);
+                                                target.select();
+                                            } />
                                         </>
                                     }.into_view()
                                 } else {
                                     view! { <span style="display:none"></span> }.into_view()
                                 }}
                                 {if !txid.is_empty() {
+                                    let funding_url = format!("https://blockstream.info/liquidtestnet/tx/{}", txid);
                                     view! {
                                         <>
                                             <label>"Funding Txid:"</label>
-                                            <input type="text" readonly value=txid />
+                                            <input type="text" readonly value=txid.clone() on:click=move |e| {
+                                                let target = leptos::event_target::<web_sys::HtmlInputElement>(&e);
+                                                target.select();
+                                            } />
+                                            <button
+                                                class="workflow-button"
+                                                style="margin-top: 8px;"
+                                                on:click=move |_| {
+                                                    if let Some(window) = web_sys::window() {
+                                                        let _ = window.open_with_url_and_target(&funding_url, "_blank");
+                                                    }
+                                                }
+                                            >
+                                                <i class="fas fa-external-link-alt"></i>
+                                                " View Funding Transaction"
+                                            </button>
                                         </>
                                     }.into_view()
                                 } else {
