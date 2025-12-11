@@ -8,47 +8,43 @@ pub struct WitnessField {
     pub placeholder: String,
 }
 
-/// Parse witness declarations from program text
-/// Looks for: const VAR_NAME: Type = ...
+/// Parse witness variable references from program text
+/// Looks for: witness::VAR_NAME and infers type
 pub fn parse_witness_fields(program_text: &str) -> Vec<WitnessField> {
+    use regex::Regex;
+    
     let mut fields = Vec::new();
     
-    // First, check if mod witness exists and parse it
-    if let Some(start) = program_text.find("mod witness {") {
-        let after_start = &program_text[start..];
-        if let Some(end) = after_start.find('}') {
-            let witness_block = &after_start[13..end]; // Skip "mod witness {"
-            
-            // Parse each const declaration: const NAME: TYPE = VALUE;
-            let lines: Vec<&str> = witness_block.lines().collect();
-            for line in lines {
-                let trimmed = line.trim();
-                if trimmed.starts_with("const ") {
-                    // Extract name and type
-                    if let Some(colon_pos) = trimmed.find(':') {
-                        let name_part = &trimmed[6..colon_pos].trim(); // Skip "const "
-                        
-                        if let Some(eq_pos) = trimmed.find('=') {
-                            let type_part = trimmed[colon_pos + 1..eq_pos].trim();
-                            
-                            let placeholder = match type_part {
-                                "Signature" | "[u8; 64]" => "64-byte hex signature (128 chars)",
-                                "Pubkey" | "[u8; 32]" => "32-byte hex pubkey (64 chars)",
-                                "u32" => "Number (e.g. 100000)",
-                                "u256" | "[u8; 32]" if name_part.contains("HASH") => "32-byte hex hash (64 chars)",
-                                _ => "Value for this witness",
-                            };
-                            
-                            fields.push(WitnessField {
-                                name: name_part.to_string(),
-                                type_name: type_part.to_string(),
-                                value: String::new(),
-                                placeholder: placeholder.to_string(),
-                            });
-                        }
-                    }
-                }
-            }
+    // Find all witness::VARIABLE_NAME references
+    let witness_re = Regex::new(r"witness::([A-Z_][A-Z0-9_]*)").unwrap();
+    
+    for cap in witness_re.captures_iter(program_text) {
+        let var_name = cap[1].to_string();
+        
+        // Infer type from variable name
+        let (type_name, placeholder) = if var_name.contains("SIGNATURE") || var_name.ends_with("_SIG") || var_name == "SIG" {
+            ("Signature", "Will be auto-generated from Key Store")
+        } else if var_name.contains("PUBKEY") || var_name.contains("PUBLIC_KEY") || var_name == "PK" {
+            ("Pubkey", "Will be auto-filled from Key Store")
+        } else if var_name.contains("PRICE") || var_name.contains("HEIGHT") || var_name.contains("ORACLE") {
+            ("u32", "Number (e.g. 50000)")
+        } else if var_name.contains("HASH") {
+            ("u256", "32-byte hex hash (64 hex chars)")
+        } else if var_name.contains("PREIMAGE") || var_name.contains("SECRET") {
+            ("u256", "32-byte hex value (64 hex chars)")
+        } else {
+            // Default to Signature for unknown types
+            ("Signature", "Will be auto-generated from Key Store")
+        };
+        
+        // Avoid duplicates
+        if !fields.iter().any(|f: &WitnessField| f.name == var_name) {
+            fields.push(WitnessField {
+                name: var_name,
+                type_name: type_name.to_string(),
+                value: String::new(),
+                placeholder: placeholder.to_string(),
+            });
         }
     }
     

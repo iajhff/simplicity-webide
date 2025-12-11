@@ -453,10 +453,37 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         set_broadcast_loading.set(true);
         set_broadcast_status.set("Generating transaction...".to_string());
         
-        // Use existing program text (witness should already be in the program)
-        // The webide approach: user manually pastes signatures into mod witness
-        // We don't auto-inject witness here - user manages it themselves
-        let original_text = program.text.get();
+        // Inject witness module from UI inputs
+        let current_program_text = program.text.get();
+        let fields = witness_fields.get();
+        
+        // Generate witness module from user inputs
+        let witness_module = witness_inputs::generate_witness_module(&fields);
+        
+        // Remove any existing mod witness block
+        let clean_text = if let Some(start) = current_program_text.find("mod witness {") {
+            let before = &current_program_text[..start];
+            if let Some(end_pos) = current_program_text[start..].find('}') {
+                let after = &current_program_text[start + end_pos + 1..];
+                format!("{}{}", before, after)
+            } else {
+                current_program_text.clone()
+            }
+        } else {
+            current_program_text.clone()
+        };
+        
+        // Inject new witness module at the top
+        let final_program_text = if !witness_module.is_empty() {
+            format!("{}{}", witness_module, clean_text)
+        } else {
+            clean_text
+        };
+        
+        // Temporarily update program text for compilation
+        let original_text = current_program_text;
+        program.text.set(final_program_text);
+        program.update_on_read();
         
         let params = tx_env.params;
         let env = tx_env.lazy_env;
