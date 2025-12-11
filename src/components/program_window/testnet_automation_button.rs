@@ -230,6 +230,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     let (generated_signature, set_generated_signature) = create_signal(String::new());
     let (broadcast_status, set_broadcast_status) = create_signal(String::new());
     let (broadcast_loading, set_broadcast_loading) = create_signal(false);
+    let (spending_txid, set_spending_txid) = create_signal(String::new());
     
     let funding_txid = create_rw_signal(String::new());
     let (current_address, set_current_address) = create_signal(String::new());
@@ -413,10 +414,16 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
 
         spawn_local(async move {
             match call_broadcast_transaction(&raw_tx).await {
-                Ok((txid, explorer_url)) => {
-                    set_broadcast_status.set(format!("✓ Success! Txid: {}...", &txid[..16]));
+                Ok((spending_tx, explorer_url)) => {
+                    // Log for debugging
+                    web_sys::console::log_1(&format!("✓ Spending transaction broadcast! Txid: {}", spending_tx).into());
+                    web_sys::console::log_1(&format!("Explorer URL: {}", explorer_url).into());
+                    
+                    set_spending_txid.set(spending_tx.clone());
+                    set_broadcast_status.set(format!("✓ Spending transaction broadcast! Txid: {}", spending_tx));
                     set_broadcast_loading.set(false);
                     
+                    // Open the SPENDING transaction (not the funding transaction)
                     if let Some(window) = web_sys::window() {
                         let _ = window.open_with_url_and_target(&explorer_url, "_blank");
                     }
@@ -591,6 +598,40 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     let status = broadcast_status.get();
                     if !status.is_empty() {
                         view! { <p class="step-status">{status}</p> }.into_view()
+                    } else {
+                        view! { <span style="display:none"></span> }.into_view()
+                    }
+                }}
+                {move || {
+                    let txid = spending_txid.get();
+                    if !txid.is_empty() {
+                        let explorer_url = format!("https://blockstream.info/liquidtestnet/tx/{}", txid);
+                        view! {
+                            <div class="step-data">
+                                <label>"Spending Transaction:"</label>
+                                <input
+                                    type="text"
+                                    readonly
+                                    value=txid.clone()
+                                    on:click=move |e| {
+                                        let target = leptos::event_target::<web_sys::HtmlInputElement>(&e);
+                                        target.select();
+                                    }
+                                />
+                                <button
+                                    class="workflow-button"
+                                    style="margin-top: 10px;"
+                                    on:click=move |_| {
+                                        if let Some(window) = web_sys::window() {
+                                            let _ = window.open_with_url_and_target(&explorer_url, "_blank");
+                                        }
+                                    }
+                                >
+                                    <i class="fas fa-external-link-alt"></i>
+                                    " View Spending Transaction"
+                                </button>
+                            </div>
+                        }.into_view()
                     } else {
                         view! { <span style="display:none"></span> }.into_view()
                     }
