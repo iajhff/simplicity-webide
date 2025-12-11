@@ -340,6 +340,24 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         
         let fields = witness_inputs::parse_witness_fields(&clean_text);
         witness_fields.set(fields);
+        
+        // Clear UTXO state when program changes - force fresh lookup
+        set_lookup_status.set(String::new());
+        set_sign_status.set(String::new());
+        set_generated_signature.set(String::new());
+        set_broadcast_status.set(String::new());
+        set_spending_txid.set(String::new());
+        set_raw_tx_hex.set(String::new());
+        set_tx_confirmed.set(false);
+    });
+    
+    // Clear broadcast state when witness fields change
+    leptos::create_effect(move |_| {
+        let _ = witness_fields.get(); // Track witness field changes
+        set_broadcast_status.set(String::new());
+        set_spending_txid.set(String::new());
+        set_raw_tx_hex.set(String::new());
+        set_tx_confirmed.set(false);
     });
     
     // Step 1: Fund from faucet (using CORS proxy)

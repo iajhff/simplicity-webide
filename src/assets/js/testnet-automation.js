@@ -149,7 +149,8 @@ class TestnetAutomation {
      */
     parseErrorMessage(errorText) {
         const errorMap = {
-            'bad-txns-inputs-missingorspent': 'UTXO doesn\'t exist or already spent. Check txid and wait for confirmation.',
+            'Transaction already in block chain': 'UTXO already spent! Go back to Step 2 (Lookup UTXO) and click "Fund & Lookup" to get a fresh UTXO.',
+            'bad-txns-inputs-missingorspent': 'UTXO doesn\'t exist or already spent. Run Step 2 (Lookup UTXO) again to get a fresh UTXO.',
             'bad-txns-in-ne-out': 'Input value ≠ output value. Check UTXO info (vout and value) and fee.',
             'bad-txns-fee-outofrange': 'Fee doesn\'t cover transaction weight. Increase the fee.',
             'non-final': 'Lock time is higher than current block height. Decrease locktime or wait.',
