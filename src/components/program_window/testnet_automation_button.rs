@@ -1,9 +1,6 @@
-use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate, SignalWith};
+use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate};
 use web_sys::js_sys;
 use simplicityhl::elements::secp256k1_zkp as secp256k1;
-use simplicityhl::{WitnessValues, Value};
-use simplicityhl::str::WitnessName;
-use std::collections::HashMap;
 use hex_conservative::DisplayHex;
 
 use crate::components::program_window::Program;
@@ -287,10 +284,6 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     let (broadcast_loading, set_broadcast_loading) = create_signal(false);
     let (spending_txid, set_spending_txid) = create_signal(String::new());
     
-    // Witness value management
-    let (detected_witness_vars, set_detected_witness_vars) = create_signal(Vec::<(String, String)>::new());
-    let (witness_field_values, set_witness_field_values) = create_signal(HashMap::<String, String>::new());
-    
     let funding_txid = create_rw_signal(String::new());
     let (current_address, set_current_address) = create_signal(String::new());
     
@@ -349,8 +342,8 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         }
         
         // Generate values for detected witness variables
-        let witness_values = match generate_witness_values(&witness_vars, &signing_keys, message) {
-            Ok(values) => values,
+        let (witness_values, _needs_multisig) = match generate_witness_values(&witness_vars, &signing_keys, message, &[]) {
+            Ok(result) => result,
             Err(err) => {
                 set_sign_status.set(format!("⚠ {}", err));
                 return;
@@ -368,7 +361,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         }
         
         // Auto-inject all witness values into the program
-        let updated_text = inject_witness_values(&current_text, &witness_values);
+        let updated_text = inject_witness_values(&current_text, &witness_values, false);
         
         if updated_text != current_text {
             program.text.set(updated_text);
