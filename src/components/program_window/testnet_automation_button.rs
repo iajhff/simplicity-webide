@@ -325,9 +325,9 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     };
     
     // Step 3: Generate witness data (implements Step 7 from official guide)
-    // Detects required witness variables and generates appropriate values
+    // ALWAYS regenerate because sighash changes when UTXO changes
     let generate_signatures = move |_| {
-        set_sign_status.set("Analyzing program witness requirements...".to_string());
+        set_sign_status.set("Generating witness for current transaction...".to_string());
         
         // Get the transaction sighash (this is the message to sign)
         let message = signed_data.message.get();
@@ -350,9 +350,14 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
             }
         };
         
+        if witness_values.is_empty() {
+            set_sign_status.set("⚠ No witness values could be generated. Complex witness type detected - check Key Store tab.".to_string());
+            return;
+        }
+        
         // Display what was generated
         let summary: Vec<String> = witness_values.iter()
-            .map(|(name, typ, val)| format!("{}:{} = {}...", name, typ, &val[..std::cmp::min(18, val.len())]))
+            .map(|(name, typ, val)| format!("{}:{}", name, typ))
             .collect();
         
         // Store first signature for display
@@ -360,27 +365,24 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
             set_generated_signature.set(sig.clone());
         }
         
-        // Auto-inject all witness values into the program
+        // ALWAYS inject witness values (replaces old signatures with new ones for current sighash)
         let updated_text = inject_witness_values(&current_text, &witness_values, false);
+        program.text.set(updated_text);
         
-        if updated_text != current_text {
-            program.text.set(updated_text);
-            // Trigger Monaco editor update if available
-            if let Some(window) = web_sys::window() {
-                if let Ok(update_fn) = js_sys::Reflect::get(&window, &"updateMonacoEditor".into()) {
-                    if !update_fn.is_undefined() {
-                        let _ = js_sys::Reflect::apply(
-                            &update_fn.into(),
-                            &window,
-                            &js_sys::Array::of1(&program.text.get().into()),
-                        );
-                    }
+        // Trigger Monaco editor update
+        if let Some(window) = web_sys::window() {
+            if let Ok(update_fn) = js_sys::Reflect::get(&window, &"updateMonacoEditor".into()) {
+                if !update_fn.is_undefined() {
+                    let _ = js_sys::Reflect::apply(
+                        &update_fn.into(),
+                        &window,
+                        &js_sys::Array::of1(&program.text.get().into()),
+                    );
                 }
             }
-            set_sign_status.set(format!("✓ Generated {} witness value(s): {}", witness_values.len(), summary.join(", ")));
-        } else {
-            set_sign_status.set("✓ Witness values generated (no changes needed)".to_string());
         }
+        
+        set_sign_status.set(format!("✓ Generated and injected {} witness value(s) for current transaction: {}", witness_values.len(), summary.join(", ")));
     };
 
     let lookup_utxo = move |_| {
