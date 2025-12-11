@@ -210,5 +210,134 @@
                 }
             }
         }
+        
+        // Witness input fields
+        .witness-inputs-container {
+            margin-top: 16px;
+            
+            .help-text {
+                margin: 0 0 16px 0;
+                color: rgba(255, 255, 255, 0.7);
+                font-size: 13px;
+                font-style: italic;
+            }
+            
+            .witness-field {
+                margin-bottom: 16px;
+                padding: 14px;
+                background: rgba(255, 149, 23, 0.08);
+                border: 1px solid rgba(255, 149, 23, 0.2);
+                border-radius: 6px;
+                transition: all 0.2s ease;
+                
+                &:hover {
+                    border-color: rgba(255, 149, 23, 0.4);
+                    background: rgba(255, 149, 23, 0.12);
+                }
+                
+                &:last-child {
+                    margin-bottom: 0;
+                }
+                
+                label {
+                    display: block;
+                    margin-bottom: 8px;
+                    color: rgba(255, 255, 255, 0.95);
+                    font-size: 14px;
+                    font-weight: 500;
+                    
+                    .field-name {
+                        color: #FF9517;
+                        font-weight: 600;
+                        font-family: 'Ubuntu Mono', monospace;
+                    }
+                    
+                    .field-type {
+                        color: rgba(255, 255, 255, 0.5);
+                        font-size: 12px;
+                        font-weight: 400;
+                        font-style: italic;
+                        margin-left: 8px;
+                    }
+                }
+                
+                input[type="text"] {
+                    width: 100%;
+                    padding: 10px 12px;
+                    background: rgba(0, 0, 0, 0.5);
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    border-radius: 4px;
+                    color: #fff;
+                    font-family: 'Ubuntu Mono', monospace;
+                    font-size: 13px;
+                    transition: all 0.2s ease;
+                    
+                    &::placeholder {
+                        color: rgba(255, 255, 255, 0.4);
+                        font-style: italic;
+                    }
+                    
+                    &:hover {
+                        background: rgba(0, 0, 0, 0.6);
+                        border-color: rgba(255, 149, 23, 0.4);
+                    }
+                    
+                    &:focus {
+                        outline: none;
+                        border-color: #FF9517;
+                        background: rgba(0, 0, 0, 0.7);
+                        box-shadow: 0 0 0 2px rgba(255, 149, 23, 0.1);
+                    }
+                    
+                    &:read-only {
+                        cursor: default;
+                        background: rgba(0, 0, 0, 0.3);
+                        color: rgba(255, 255, 255, 0.7);
+                    }
+                }
+                
+                .field-hint {
+                    margin-top: 6px;
+                    font-size: 11px;
+                    color: rgba(255, 149, 23, 0.7);
+                    font-style: italic;
+                }
+            }
+            
+            // Auto-generate button specific to witness section
+            .witness-auto-button {
+                margin-top: 16px;
+                width: 100%;
+                padding: 12px 20px;
+                background: linear-gradient(135deg, rgba(76, 175, 80, 0.3) 0%, rgba(56, 142, 60, 0.3) 100%);
+                border: 1px solid rgba(76, 175, 80, 0.5);
+                border-radius: 6px;
+                color: #A5D6A7;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                
+                i {
+                    font-size: 15px;
+                }
+                
+                &:hover:not(:disabled) {
+                    background: linear-gradient(135deg, rgba(76, 175, 80, 0.4) 0%, rgba(56, 142, 60, 0.4) 100%);
+                    border-color: rgba(76, 175, 80, 0.7);
+                    transform: translateY(-1px);
+                    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.2);
+                }
+                
+                &:disabled {
+                    opacity: 0.4;
+                    cursor: not-allowed;
+                }
+            }
+        }
     }
 }

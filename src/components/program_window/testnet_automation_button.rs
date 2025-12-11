@@ -379,7 +379,7 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         // Get the transaction sighash (this is the message to sign)
         let message = signed_data.message.get();
         
-        // Auto-fill Signature and MultiSig fields
+        // Auto-fill Signature, Pubkey, and MultiSig fields
         let mut filled_any = false;
         witness_fields.update(|fields| {
             for field in fields.iter_mut() {
@@ -387,6 +387,11 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                     // Generate signature using first key (Alice)
                     let signature = signing_keys.secret_keys[0].sign_schnorr(message);
                     field.value = format!("0x{}", signature.as_ref().to_lower_hex_string());
+                    filled_any = true;
+                } else if field.type_name == "Pubkey" || field.type_name == "[u8; 32]" {
+                    // Use Alice's public key
+                    let pubkey = signing_keys.public_keys[0];
+                    field.value = format!("0x{}", pubkey.serialize().to_lower_hex_string());
                     filled_any = true;
                 } else if field.type_name.starts_with("[Option<[u8; 64]>;") {
                     // Multisig array - generate signatures from multiple keys
@@ -708,6 +713,12 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                                     children=move |field: WitnessField| {
                                         let field_name = field.name.clone();
                                         
+                                        let is_auto_generated = field.type_name == "Signature" || 
+                                                                 field.type_name.starts_with("[Option<[u8; 64]>;");
+                                        let needs_manual = field.type_name == "u32" || 
+                                                          field.type_name == "u256" || 
+                                                          field.type_name == "Pubkey";
+                                        
                                         view! {
                                             <div class="witness-field">
                                                 <label>
@@ -727,18 +738,34 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                                                         });
                                                     }
                                                 />
+                                                {if is_auto_generated {
+                                                    view! {
+                                                        <div class="field-hint">
+                                                            <i class="fas fa-magic"></i>
+                                                            " Auto-generated when you click button below"
+                                                        </div>
+                                                    }.into_view()
+                                                } else if needs_manual {
+                                                    view! {
+                                                        <div class="field-hint">
+                                                            <i class="fas fa-edit"></i>
+                                                            " Manual input required"
+                                                        </div>
+                                                    }.into_view()
+                                                } else {
+                                                    view! { <span style="display:none"></span> }.into_view()
+                                                }}
                                             </div>
                                         }
                                     }
                                 />
                                 
                                 <button
-                                    class="workflow-button"
-                                    style="margin-top: 12px;"
+                                    class="witness-auto-button"
                                     on:click=generate_signatures
                                     disabled=move || !lookup_status.get().contains("Found") && !lookup_status.get().contains("Auto-filled")
                                 >
-                                    <i class="fas fa-key"></i>
+                                    <i class="fas fa-magic"></i>
                                     " Auto-Generate Signatures"
                                 </button>
                             </div>
