@@ -1,9 +1,10 @@
-use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, IntoView, SignalGet, SignalSet, SignalUpdate};
+use leptos::{component, create_rw_signal, create_signal, spawn_local, use_context, view, with, For, IntoView, SignalGet, SignalSet, SignalUpdate, SignalWith};
 use web_sys::js_sys;
 use simplicityhl::elements::secp256k1_zkp as secp256k1;
 use hex_conservative::DisplayHex;
 
 use crate::components::program_window::Program;
+use crate::components::program_window::witness_inputs::{self, WitnessField};
 use crate::components::run_window::{SignedData, TxEnv};
 use crate::util::{self, SigningKeys};
 
@@ -58,32 +59,51 @@ struct ProgramAnalysis {
     uses_preimage: bool,
 }
 
-/// Detect all witness variables used in the program with smart type inference
-fn detect_witness_variables(program_text: &str) -> Vec<(String, String)> {
+/// Parse witness variable declarations from mod witness block
+fn parse_witness_declarations(program_text: &str) -> Vec<WitnessVariable> {
     let mut witness_vars = Vec::new();
     
-    // Analyze program to understand what it does
-    let analysis = analyze_program_structure(program_text);
-    
-    // Regex to find witness::VARIABLE_NAME
-    let witness_re = regex::Regex::new(r"witness::([A-Z_][A-Z0-9_]*)").unwrap();
-    
-    for cap in witness_re.captures_iter(program_text) {
-        let var_name = cap[1].to_string();
-        
-        // Smart type inference based on:
-        // 1. Variable name
-        // 2. Program structure analysis
-        // 3. Context of usage
-        let var_type = infer_witness_type(&var_name, &analysis, program_text);
-        
-        // Avoid duplicates
-        if !witness_vars.iter().any(|(name, _)| name == &var_name) {
-            witness_vars.push((var_name, var_type));
+    // First, check if mod witness exists
+    if let Some(start) = program_text.find("mod witness {") {
+        let after_start = &program_text[start..];
+        if let Some(end) = after_start.find('}') {
+            let witness_block = &after_start[13..end]; // Skip "mod witness {"
+            
+            // Parse each const declaration
+            let const_re = regex::Regex::new(r"const\s+([A-Z_][A-Z0-9_]*)\s*:\s*([^=]+)=").unwrap();
+            for cap in const_re.captures_iter(witness_block) {
+                let var_name = cap[1].trim().to_string();
+                let var_type = cap[2].trim().to_string();
+                witness_vars.push(WitnessVariable {
+                    name: var_name,
+                    type_name: var_type,
+                    value: String::new(),
+                });
+            }
+        }
+    } else {
+        // No mod witness block - scan for witness:: references
+        let witness_re = regex::Regex::new(r"witness::([A-Z_][A-Z0-9_]*)").unwrap();
+        for cap in witness_re.captures_iter(program_text) {
+            let var_name = cap[1].to_string();
+            if !witness_vars.iter().any(|v| v.name == var_name) {
+                witness_vars.push(WitnessVariable {
+                    name: var_name,
+                    type_name: "Unknown".to_string(),
+                    value: String::new(),
+                });
+            }
         }
     }
     
     witness_vars
+}
+
+#[derive(Debug, Clone)]
+struct WitnessVariable {
+    name: String,
+    type_name: String,
+    value: String,
 }
 
 /// Infer witness variable type from name and program context
@@ -296,6 +316,29 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     let signing_keys = use_context::<SigningKeys>().expect("signing keys should exist");
     let signed_data = use_context::<SignedData>().expect("signed data should exist");
     
+    // Parse witness fields from program
+    let witness_fields = create_rw_signal(Vec::<WitnessField>::new());
+    
+    // Update witness fields when program changes
+    leptos::create_effect(move |_| {
+        let program_text = program.text.with(|t| t.clone());
+        // Remove existing mod witness to parse clean declarations
+        let clean_text = if let Some(start) = program_text.find("mod witness {") {
+            let before = &program_text[..start];
+            if let Some(end_pos) = program_text[start..].find('}') {
+                let after = &program_text[start + end_pos + 1..];
+                format!("{}{}", before, after)
+            } else {
+                program_text
+            }
+        } else {
+            program_text
+        };
+        
+        let fields = witness_inputs::parse_witness_fields(&clean_text);
+        witness_fields.set(fields);
+    });
+    
     // Step 1: Fund from faucet (using CORS proxy)
     let auto_fund = move |_| {
         let address = program
@@ -329,65 +372,37 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         });
     };
     
-    // Step 3: Generate witness data (implements Step 7 from official guide)
-    // ALWAYS regenerate because sighash changes when UTXO changes
+    // Step 3: Auto-generate signature values for Signature type fields
     let generate_signatures = move |_| {
-        set_sign_status.set("Generating witness for current transaction...".to_string());
+        set_sign_status.set("Auto-generating signatures...".to_string());
         
         // Get the transaction sighash (this is the message to sign)
         let message = signed_data.message.get();
         
-        // Detect what witness variables the program needs
-        let current_text = program.text.get();
-        let witness_vars = detect_witness_variables(&current_text);
-        
-        if witness_vars.is_empty() {
-            set_sign_status.set("✗ No witness variables found in program. Add witness::ALICE_SIGNATURE or similar to your main function.".to_string());
-            return;
-        }
-        
-        // Generate values for detected witness variables
-        let (witness_values, _needs_multisig) = match generate_witness_values(&witness_vars, &signing_keys, message, &[]) {
-            Ok(result) => result,
-            Err(err) => {
-                set_sign_status.set(format!("⚠ {}", err));
-                return;
-            }
-        };
-        
-        if witness_values.is_empty() {
-            set_sign_status.set("⚠ No witness values could be generated. Complex witness type detected - check Key Store tab.".to_string());
-            return;
-        }
-        
-        // Display what was generated
-        let summary: Vec<String> = witness_values.iter()
-            .map(|(name, typ, val)| format!("{}:{}", name, typ))
-            .collect();
-        
-        // Store first signature for display
-        if let Some((_, _, sig)) = witness_values.iter().find(|(_, typ, _)| typ == "Signature") {
-            set_generated_signature.set(sig.clone());
-        }
-        
-        // ALWAYS inject witness values (replaces old signatures with new ones for current sighash)
-        let updated_text = inject_witness_values(&current_text, &witness_values, false);
-        program.text.set(updated_text);
-        
-        // Trigger Monaco editor update
-        if let Some(window) = web_sys::window() {
-            if let Ok(update_fn) = js_sys::Reflect::get(&window, &"updateMonacoEditor".into()) {
-                if !update_fn.is_undefined() {
-                    let _ = js_sys::Reflect::apply(
-                        &update_fn.into(),
-                        &window,
-                        &js_sys::Array::of1(&program.text.get().into()),
-                    );
+        // Auto-fill Signature fields
+        let mut filled_any = false;
+        witness_fields.update(|fields| {
+            for field in fields.iter_mut() {
+                if field.type_name == "Signature" || field.type_name == "[u8; 64]" {
+                    // Generate signature using first key
+                    let signature = signing_keys.secret_keys[0].sign_schnorr(message);
+                    field.value = format!("0x{}", signature.as_ref().to_lower_hex_string());
+                    filled_any = true;
                 }
             }
-        }
+        });
         
-        set_sign_status.set(format!("✓ Generated and injected {} witness value(s) for current transaction: {}", witness_values.len(), summary.join(", ")));
+        if filled_any {
+            set_sign_status.set("✓ Auto-generated signatures for Signature fields".to_string());
+            // Show first generated signature for reference
+            if let Some(field) = witness_fields.with(|fields| {
+                fields.iter().find(|f| f.type_name == "Signature" && !f.value.is_empty()).cloned()
+            }) {
+                set_generated_signature.set(field.value);
+            }
+        } else {
+            set_sign_status.set("⚠ No Signature fields found to auto-generate".to_string());
+        }
     };
 
     let lookup_utxo = move |_| {
@@ -438,6 +453,34 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
         set_broadcast_loading.set(true);
         set_broadcast_status.set("Generating transaction...".to_string());
         
+        // Inject witness module from user inputs
+        let current_program_text = program.text.with(|t| t.clone());
+        let fields = witness_fields.get();
+        
+        // Generate witness module
+        let witness_module = witness_inputs::generate_witness_module(&fields);
+        
+        // Remove old mod witness if exists, then inject new one
+        let clean_text = if let Some(start) = current_program_text.find("mod witness {") {
+            let before = &current_program_text[..start];
+            if let Some(end_pos) = current_program_text[start..].find('}') {
+                let after = &current_program_text[start + end_pos + 1..];
+                format!("{}{}", before, after)
+            } else {
+                current_program_text.clone()
+            }
+        } else {
+            current_program_text.clone()
+        };
+        
+        // Inject witness at the top
+        let final_program_text = format!("{}\n{}", witness_module, clean_text);
+        
+        // Temporarily update program text for compilation
+        let original_text = program.text.get();
+        program.text.set(final_program_text);
+        program.update_on_read();
+        
         let params = tx_env.params;
         let env = tx_env.lazy_env;
         
@@ -451,6 +494,9 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
                 Err(e) => {
                     set_broadcast_status.set(format!("✗ Program error: {}. Fix your program first.", e));
                     set_broadcast_loading.set(false);
+                    // Restore original text
+                    program.text.set(original_text.clone());
+                    program.update_on_read();
                     return String::new();
                 }
             };
@@ -464,6 +510,10 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
             };
             params.transaction(&pruned).serialize().to_lower_hex_string()
         });
+        
+        // Restore original program text
+        program.text.set(original_text);
+        program.update_on_read();
         
         if raw_tx.is_empty() {
             return;
@@ -609,16 +659,66 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
             <div class="workflow-step">
                 <div class="step-header">
                     <span class="step-number">"3"</span>
-                    <h4>"Generate Witness Data"</h4>
+                    <h4>"Witness Values"</h4>
                 </div>
-                <button
-                    class="workflow-button"
-                    on:click=generate_signatures
-                    disabled=move || !lookup_status.get().contains("Found") && !lookup_status.get().contains("Auto-filled")
-                >
-                    <i class="fas fa-key"></i>
-                    " Generate Witness Values"
-                </button>
+                
+                {move || {
+                    let fields = witness_fields.get();
+                    if fields.is_empty() {
+                        view! {
+                            <p class="help-text">
+                                "✓ No witness values required for this contract."
+                            </p>
+                        }.into_view()
+                    } else {
+                        view! {
+                            <div class="witness-inputs-container">
+                                <p class="help-text">
+                                    "Enter witness values below. Leave empty to use defaults."
+                                </p>
+                                <For
+                                    each=move || witness_fields.get()
+                                    key=|field| field.name.clone()
+                                    children=move |field: WitnessField| {
+                                        let field_name = field.name.clone();
+                                        
+                                        view! {
+                                            <div class="witness-field">
+                                                <label>
+                                                    <span class="field-name">{field.name.clone()}</span>
+                                                    <span class="field-type">" ("{field.type_name.clone()}")"</span>
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder=field.placeholder.clone()
+                                                    value=field.value.clone()
+                                                    on:input=move |e| {
+                                                        let new_value = leptos::event_target_value(&e);
+                                                        witness_fields.update(|fields| {
+                                                            if let Some(f) = fields.iter_mut().find(|f| f.name == field_name) {
+                                                                f.value = new_value;
+                                                            }
+                                                        });
+                                                    }
+                                                />
+                                            </div>
+                                        }
+                                    }
+                                />
+                                
+                                <button
+                                    class="workflow-button"
+                                    style="margin-top: 12px;"
+                                    on:click=generate_signatures
+                                    disabled=move || !lookup_status.get().contains("Found") && !lookup_status.get().contains("Auto-filled")
+                                >
+                                    <i class="fas fa-key"></i>
+                                    " Auto-Generate Signatures"
+                                </button>
+                            </div>
+                        }.into_view()
+                    }
+                }}
                 {move || {
                     let sig = generated_signature.get();
                     if !sig.is_empty() {
