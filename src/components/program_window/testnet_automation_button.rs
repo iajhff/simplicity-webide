@@ -128,15 +128,17 @@ fn infer_witness_type(var_name: &str, analysis: &ProgramAnalysis, program_text: 
     }
 }
 
-/// Generate witness values based on detected variables
+/// Generate witness/param values based on detected variables
 fn generate_witness_values(
     witness_vars: &[(String, String)],
     signing_keys: &SigningKeys,
     sighash: secp256k1::Message,
-) -> Result<Vec<(String, String, String)>, String> {
+    selected_key_indices: &[usize],
+) -> Result<(Vec<(String, String, String)>, bool), String> {
     use hex_conservative::DisplayHex;
     let mut generated = Vec::new();
     let mut unsupported = Vec::new();
+    let mut needs_multisig_selection = false;
     
     for (var_name, var_type) in witness_vars {
         match var_type.as_str() {
@@ -153,21 +155,26 @@ fn generate_witness_values(
                 generated.push((var_name.clone(), var_type.clone(), pk_hex));
             }
             "MultiSig" => {
-                // Multi-signature array with optional values - too complex to auto-generate
-                unsupported.push(format!(
-                    "{}:MultiSig (array of optional signatures - requires manual definition. See examples dropdown for template)",
-                    var_name
-                ));
+                // For multisig, generate individual signature params if keys are selected
+                if selected_key_indices.is_empty() {
+                    needs_multisig_selection = true;
+                } else {
+                    // Generate individual signatures for selected keys
+                    for &key_idx in selected_key_indices {
+                        let key_name = get_key_name(key_idx);
+                        let sig = signing_keys.secret_keys[key_idx].sign_schnorr(sighash);
+                        let sig_hex = format!("0x{}", sig.serialize().as_hex());
+                        generated.push((
+                            format!("{}_SIGNATURE", key_name.to_uppercase()),
+                            "Signature".to_string(),
+                            sig_hex
+                        ));
+                    }
+                }
             }
             "u256" => {
                 // For preimages or generic u256, use placeholder
-                // User needs to manually provide the actual value
                 unsupported.push(format!("{}:u256 (preimage/hash - requires manual input)", var_name));
-                generated.push((
-                    var_name.clone(),
-                    var_type.clone(),
-                    "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
-                ));
             }
             "SumType" => {
                 // Complex sum type - cannot auto-generate
@@ -181,40 +188,84 @@ fn generate_witness_values(
     
     if !unsupported.is_empty() {
         return Err(format!(
-            "Cannot auto-generate witness for: {}. Please define these manually in mod witness {{}}",
+            "Cannot auto-generate: {}. Please define manually.",
             unsupported.join(", ")
         ));
     }
     
-    Ok(generated)
+    Ok((generated, needs_multisig_selection))
 }
 
-/// Inject witness values into program text
-fn inject_witness_values(program_text: &str, witness_values: &[(String, String, String)]) -> String {
+fn get_key_name(index: usize) -> &'static str {
+    match index {
+        0 => "ALICE",
+        1 => "BOB",
+        2 => "CHARLIE",
+        3 => "DAVID",
+        4 => "EVE",
+        5 => "FRANK",
+        6 => "GRACE",
+        7 => "HEIDI",
+        8 => "IVAN",
+        9 => "JUDY",
+        _ => "KEY",
+    }
+}
+
+/// Inject values into program text (as params for multisig, as witness for simple)
+fn inject_witness_values(program_text: &str, witness_values: &[(String, String, String)], as_params: bool) -> String {
     if witness_values.is_empty() {
         return program_text.to_string();
     }
     
-    // Build witness module content
-    let mut witness_content = String::from("mod witness {\n");
-    for (var_name, var_type, value) in witness_values {
-        witness_content.push_str(&format!("    const {}: {} = {};\n", var_name, var_type, value));
-    }
-    witness_content.push_str("}");
-    
-    // Check if witness module exists
-    if program_text.contains("mod witness") {
-        // Replace existing witness module
-        let re = regex::Regex::new(r"mod\s+witness\s*\{[^}]*\}").unwrap();
-        if let Some(mat) = re.find(program_text) {
-            program_text.replace(mat.as_str(), &witness_content)
+    if as_params {
+        // Inject as params (for multisig - user constructs witness from these)
+        let mut param_content = String::from("mod param {\n");
+        // Keep existing params
+        if let Some(existing_params) = extract_module_content(program_text, "param") {
+            param_content.push_str(&existing_params);
+        }
+        // Add new signature params
+        for (var_name, var_type, value) in witness_values {
+            param_content.push_str(&format!("    const {}: {} = {};\n", var_name, var_type, value));
+        }
+        param_content.push_str("}");
+        
+        // Replace or insert param module
+        if program_text.contains("mod param") {
+            let re = regex::Regex::new(r"mod\s+param\s*\{[^}]*\}").unwrap();
+            if let Some(mat) = re.find(program_text) {
+                program_text.replace(mat.as_str(), &param_content)
+            } else {
+                program_text.to_string()
+            }
         } else {
-            program_text.to_string()
+            format!("{}\n\n{}", param_content, program_text)
         }
     } else {
-        // Create new witness module at the beginning
-        format!("{}\n\n{}", witness_content, program_text)
+        // Inject as witness (for simple cases)
+        let mut witness_content = String::from("mod witness {\n");
+        for (var_name, var_type, value) in witness_values {
+            witness_content.push_str(&format!("    const {}: {} = {};\n", var_name, var_type, value));
+        }
+        witness_content.push_str("}");
+        
+        if program_text.contains("mod witness") {
+            let re = regex::Regex::new(r"mod\s+witness\s*\{[^}]*\}").unwrap();
+            if let Some(mat) = re.find(program_text) {
+                program_text.replace(mat.as_str(), &witness_content)
+            } else {
+                program_text.to_string()
+            }
+        } else {
+            format!("{}\n\n{}", witness_content, program_text)
+        }
     }
+}
+
+fn extract_module_content(program_text: &str, module_name: &str) -> Option<String> {
+    let re = regex::Regex::new(&format!(r"mod\s+{}\s*\{{([^}}]*)\}}", module_name)).ok()?;
+    re.captures(program_text).and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()))
 }
 
 #[component]
@@ -231,6 +282,10 @@ pub fn TestnetAutomationButtons() -> impl IntoView {
     let (broadcast_status, set_broadcast_status) = create_signal(String::new());
     let (broadcast_loading, set_broadcast_loading) = create_signal(false);
     let (spending_txid, set_spending_txid) = create_signal(String::new());
+    
+    // Multisig signature selection
+    let (show_sig_selector, set_show_sig_selector) = create_signal(false);
+    let (selected_keys, set_selected_keys) = create_signal(Vec::<usize>::new());
     
     let funding_txid = create_rw_signal(String::new());
     let (current_address, set_current_address) = create_signal(String::new());
