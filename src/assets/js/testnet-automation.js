@@ -117,7 +117,7 @@ class TestnetAutomation {
      */
     async broadcastTransaction(rawTx) {
         try {
-            const response = await fetch(`${this.ESPLORA_API}/tx`, {
+            const response = await fetch(`${this.ESPLORA_API}/push/tx`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'text/plain',
