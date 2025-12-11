@@ -93,7 +93,7 @@ fn infer_witness_type(var_name: &str, analysis: &ProgramAnalysis, program_text: 
         return "MultiSig".to_string(); // Complex array of optional signatures
     }
     
-    // Check variable name patterns
+    // Check variable name patterns - ONLY generate for explicit signature/key names
     if var_name.contains("SIGNATURE") || var_name == "SIG" || var_name.ends_with("_SIG") {
         // If multiple signatures are needed, it might be an array
         if analysis.signature_count > 1 {
@@ -110,6 +110,11 @@ fn infer_witness_type(var_name: &str, analysis: &ProgramAnalysis, program_text: 
         return "u256".to_string(); // Preimages are typically u256
     }
     
+    // Check for oracle or price data
+    if var_name.contains("ORACLE") || var_name.contains("PRICE") || var_name.contains("HEIGHT") {
+        return "u32".to_string(); // Oracle data is typically u32
+    }
+    
     // Check if it's used in a conditional (might be sum type)
     if analysis.has_conditional {
         // Look for the variable in match or if expressions
@@ -121,12 +126,8 @@ fn infer_witness_type(var_name: &str, analysis: &ProgramAnalysis, program_text: 
         }
     }
     
-    // Default: if program has signature verification, assume it's a signature
-    if analysis.has_signature_verification {
-        "Signature".to_string()
-    } else {
-        "u256".to_string() // Generic fallback
-    }
+    // Default to Unknown - don't assume type
+    "Unknown".to_string()
 }
 
 /// Generate witness/param values based on detected variables
@@ -173,6 +174,10 @@ fn generate_witness_values(
                     }
                 }
             }
+            "u32" => {
+                // Oracle data or other u32 values - needs manual input
+                unsupported.push(format!("{}:u32 (requires manual value - see examples for defaults)", var_name));
+            }
             "u256" => {
                 // For preimages or generic u256, use placeholder
                 unsupported.push(format!("{}:u256 (preimage/hash - requires manual input)", var_name));
@@ -181,8 +186,8 @@ fn generate_witness_values(
                 // Complex sum type - cannot auto-generate
                 unsupported.push(format!("{}:SumType (complex type - requires manual definition)", var_name));
             }
-            _ => {
-                unsupported.push(format!("{}:{} (unknown type)", var_name, var_type));
+            "Unknown" | _ => {
+                unsupported.push(format!("{}:{} (unknown type - cannot auto-generate)", var_name, var_type));
             }
         }
     }
