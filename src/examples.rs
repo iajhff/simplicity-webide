@@ -247,11 +247,7 @@ const SIGHASH_ANYPREVOUT: Example = Example {
 
 The coins move if the person with the given public key signs the transaction.
 The transaction input can be exchanged by a third party with a "similar" input while the signature remains valid."#,
-    program: r#"mod witness {
-    const SIG: Signature = 0x1d63cf0bc063d44f7546c67d7a3abcd15ef5a64aa4bb2a04e342a0a512b63d82e88638e2f85e21da67d1f709bbea6043aa59b47a3ed7e6147190ac92438824aa;
-}
-
-fn main() {
+    program: r#"fn main() {
     let ctx: Ctx8 = jet::sha_256_ctx_8_init();
     // Blockchain
     let ctx: Ctx8 = jet::sha_256_ctx_8_add_32(ctx, jet::genesis_block_hash());
